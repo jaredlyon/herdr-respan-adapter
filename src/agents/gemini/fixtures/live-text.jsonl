@@ -1,0 +1,6 @@
+{"sessionId":"live-text","projectHash":"293b5a4b66005b0a384c4dcd2169954526eef92b9240e5b76439c2dfecc7d7c8","startTime":"2026-10-10T01:49:40.451Z","lastUpdated":"2026-10-10T01:49:40.451Z","kind":"main"}
+{"$set":{"messages":[{"id":"d04923d38bb0f6017037e74183378ef4","timestamp":"2026-10-10T01:49:40.452Z","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>"}]}],"lastUpdated":"2026-10-10T01:49:40.452Z"}}
+{"id":"7b87ff46-7187-4ffd-9db7-502e61aa9576","timestamp":"2026-10-10T01:49:40.516Z","type":"user","content":[{"text":"Say the deterministic mock text."}]}
+{"$set":{"lastUpdated":"2026-10-10T01:49:40.516Z"}}
+{"id":"a7e86763-68b8-4d75-8bd4-cf50e90583ed","timestamp":"2026-10-10T01:49:40.611Z","type":"gemini","content":"hra-e2e mock response","thoughts":[],"tokens":{"input":11,"output":7,"cached":3,"thoughts":0,"tool":0,"total":18},"model":"gemini-2.5-flash"}
+{"$set":{"lastUpdated":"2026-10-10T01:49:40.611Z"}}

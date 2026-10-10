@@ -1,0 +1,280 @@
+[
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionStart",
+    "timestamp": "2026-10-10T01:49:40.452Z",
+    "source": "startup"
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeAgent",
+    "timestamp": "2026-10-10T01:49:40.477Z",
+    "prompt": "Say the deterministic mock text."
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeModel",
+    "timestamp": "2026-10-10T01:49:40.517Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>Say the deterministic mock text."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    }
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterModel",
+    "timestamp": "2026-10-10T01:49:40.561Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>Say the deterministic mock text."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    },
+    "llm_response": {
+      "text": "hra-e2e mock response",
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              "hra-e2e mock response"
+            ]
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 11,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 18
+      }
+    }
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterAgent",
+    "timestamp": "2026-10-10T01:49:40.611Z",
+    "prompt": "Say the deterministic mock text.",
+    "prompt_response": "hra-e2e mock response",
+    "stop_hook_active": false
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-edad2af3.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionEnd",
+    "timestamp": "2026-10-10T01:49:40.683Z",
+    "reason": "exit"
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionStart",
+    "timestamp": "2026-10-10T01:49:41.757Z",
+    "source": "startup"
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeAgent",
+    "timestamp": "2026-10-10T01:49:41.782Z",
+    "prompt": "RUN_TOOL: execute echo hra-e2e then reply."
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeModel",
+    "timestamp": "2026-10-10T01:49:41.821Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterModel",
+    "timestamp": "2026-10-10T01:49:41.853Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    },
+    "llm_response": {
+      "text": "",
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": []
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 11,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 18
+      }
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeTool",
+    "timestamp": "2026-10-10T01:49:41.914Z",
+    "tool_name": "run_shell_command",
+    "tool_input": {
+      "command": "echo hra-e2e"
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterTool",
+    "timestamp": "2026-10-10T01:49:41.970Z",
+    "tool_name": "run_shell_command",
+    "tool_input": {
+      "command": "echo hra-e2e"
+    },
+    "tool_response": {
+      "llmContent": "<untrusted_context>\nOutput: hra-e2e\nProcess Group PGID: 1234\n</untrusted_context>",
+      "returnDisplay": "hra-e2e"
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "BeforeModel",
+    "timestamp": "2026-10-10T01:49:41.996Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterModel",
+    "timestamp": "2026-10-10T01:49:42.037Z",
+    "llm_request": {
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "content": "<session_context>\nThis is the Gemini CLI. We are setting up the context for our chat.\nToday's date is Friday, October 9, 2026 (formatted according to the user's locale).\nMy operating system is: linux\nThe project's temporary directory is: /fixture/home/.gemini/tmp/work\n- **Workspace Directories:**\n  - /fixture/work\n- **Directory Structure:**\n\nShowing up to 200 items (files + folders).\n\n/fixture/work/\n\n\n\n</session_context>RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "config": {
+        "temperature": 1,
+        "topP": 0.95,
+        "topK": 64
+      }
+    },
+    "llm_response": {
+      "text": "hra-e2e mock response",
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              "hra-e2e mock response"
+            ]
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 11,
+        "candidatesTokenCount": 7,
+        "totalTokenCount": 18
+      }
+    }
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "AfterAgent",
+    "timestamp": "2026-10-10T01:49:42.069Z",
+    "prompt": "RUN_TOOL: execute echo hra-e2e then reply.",
+    "prompt_response": "hra-e2e mock response",
+    "stop_hook_active": false
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "/fixture/home/.gemini/tmp/work/chats/session-2026-10-10T01-49-e395c488.jsonl",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionEnd",
+    "timestamp": "2026-10-10T01:49:42.149Z",
+    "reason": "exit"
+  }
+]

@@ -139,3 +139,51 @@ fn concurrent_tools_with_identical_millisecond_timestamps_keep_distinct_spans() 
     assert!(tools.iter().any(|r| r.name == "read_file" && r.input == Some(json!({"path":"a"}))));
     assert!(tools.iter().any(|r| r.name == "list_directory" && r.input == Some(json!({"path":"b"}))));
 }
+
+#[test]
+fn captured_cli_turns_preserve_exact_model_rounds_usage_and_echo_tool() {
+    let tmp = crate::tests::Temp::new();
+    let path = tmp.path.join("session.jsonl");
+    let mut payloads: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    let tool_lines: Vec<_> = include_str!("fixtures/live-tool.jsonl").lines().collect();
+    for payload in &mut payloads {
+        payload["transcript_path"] = json!(path.to_string_lossy());
+        match (text(payload, "session_id").unwrap(), text(payload, "hook_event_name").unwrap()) {
+            (_, "SessionStart") => { let _ = std::fs::remove_file(&path); }
+            ("live-text", "AfterAgent") => std::fs::write(&path, include_str!("fixtures/live-text.jsonl")).unwrap(),
+            ("live-tool", "BeforeTool") => std::fs::write(&path, format!("{}\n", tool_lines[..6].join("\n"))).unwrap(),
+            ("live-tool", "BeforeModel") if path.exists() => std::fs::write(&path, format!("{}\n", tool_lines[..9].join("\n"))).unwrap(),
+            ("live-tool", "AfterAgent") => std::fs::write(&path, include_str!("fixtures/live-tool.jsonl")).unwrap(),
+            _ => {}
+        }
+        let bytes = serde_json::to_vec(payload).unwrap();
+        let mut ctx = context(&tmp);
+        hook(&mut ctx, &bytes).unwrap();
+        hook(&mut ctx, &bytes).unwrap();
+    }
+    let all = records(&tmp);
+    assert_eq!(all.len(), 6);
+    for (session, expected_chats, expected_tools) in [("live-text", 1, 0), ("live-tool", 2, 1)] {
+        let tree: Vec<_> = all.iter().filter(|span| span.thread_id.as_deref() == Some(session)).collect();
+        let turns: Vec<_> = tree.iter().filter(|span| span.log_type == "agent").collect();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(tree.iter().filter(|span| span.log_type == "chat").count(), expected_chats);
+        assert_eq!(tree.iter().filter(|span| span.log_type == "tool").count(), expected_tools);
+        for child in tree.iter().filter(|span| span.log_type != "agent") {
+            assert_eq!(child.parent_key.as_ref(), Some(&turns[0].span_key));
+            assert_eq!(child.status, "ok");
+            if child.log_type == "chat" {
+                assert_eq!(child.model.as_deref(), Some("gemini-2.5-flash"));
+                assert_eq!(child.usage.input_tokens, Some(11));
+                assert_eq!(child.usage.output_tokens, Some(7));
+                assert_eq!(child.usage.cache_read_input_tokens, Some(3));
+                assert_eq!(child.usage.reasoning_tokens, Some(0));
+            } else {
+                assert_eq!(child.name, "run_shell_command");
+                assert_eq!(child.input, Some(json!({"command":"echo hra-e2e"})));
+                assert!(child.output.as_ref().unwrap().to_string().contains("hra-e2e"));
+            }
+        }
+    }
+    assert_eq!(all.iter().filter(|span| span.log_type == "chat" && span.output == Some(json!([{"role":"assistant","content":"hra-e2e mock response"}]))).count(), 2);
+}

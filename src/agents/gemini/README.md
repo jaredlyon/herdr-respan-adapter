@@ -62,8 +62,8 @@ Current hook shapes, PowerShell selection, and JSONL recording here are pinned t
 proven to exist at that oldest release. Setup reports this distinction, does not
 override disabled hook controls, and notes project trust requirements.
 
-All fixtures are **synthetic**, with no provider calls, accounts, or personal
-content:
+The original fixtures below are **synthetic**, with no provider calls, accounts,
+or personal content:
 
 - `fixtures/stream.json`: native payloads from
   [`packages/core/src/hooks/types.ts:505-718`](https://github.com/google-gemini/gemini-cli/blob/9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83/packages/core/src/hooks/types.ts#L505-L718)
@@ -88,6 +88,47 @@ content:
 Tests cover a golden Batch, exactly one chat span for a multi-chunk request,
 actual bridge spool parenting and deduplication, cross-process state, multiple
 model rounds/tools per turn, same-timestamp concurrent tool identities, foreign rejection, metadata-only persistence, and
-setup→remove with existing herdr/telemetry controls. No real Gemini session,
-Windows process launch, provider/proxy login, or Respan delivery has been
-exercised by this slice.
+setup→remove with existing herdr/telemetry controls. Captured real CLI replay
+also covers text/tool model rounds, exact usage and native JSONL settlement.
+Windows process launch, provider/proxy login and real Respan delivery remain
+unexercised.
+
+
+## Real CLI mock-provider E2E
+
+Run on Spark (Linux aarch64, Gemini CLI **0.63.0**, herdr **0.9.3**):
+
+```sh
+~/.cargo/bin/cargo build --release
+HRA_BIN="$PWD/target/release/herdr-respan" bash scripts/e2e/run_gemini.sh
+```
+
+The driver creates its own `hra-e2e-gemini` session and fresh evidence directory
+under `~/.hra-e2e/gemini/run-*`. Agent processes receive an explicit clean
+environment, isolated HOME/XDG/`GEMINI_CLI_HOME`, dummy API key and loopback
+`GOOGLE_GEMINI_BASE_URL`; settings preseed `gemini-api-key` and disabled
+telemetry. Only the mock's harmless `run_shell_command` echo is authorized.
+No account, real user config, real provider or Respan endpoint is used.
+
+Acceptance requires two traces: text → one turn/one chat; tool → one turn/two
+chats/one `run_shell_command`. Every chat must have input=11, output=7 and
+cache_read=3, and every child must have its turn parent. Provider streamed
+response count must equal chat count despite multiple native AfterModel hooks.
+Native thread and herdr pane/workspace/machine metadata must be present, with
+no duplicates/orphans. A completed outside-herdr tool turn must deliver nothing;
+remove must restore settings semantically, including capture hooks/telemetry.
+Artifacts retain native hooks, JSONL transcripts, requests, outputs and raw OTLP.
+
+`fixtures/live-hooks.json`, `fixtures/live-text.jsonl` and
+`fixtures/live-tool.jsonl` were **captured live 2026-10-10 UTC (2026-10-09 local)
+against the loopback mock provider**, with Gemini CLI 0.63.0 on Spark. Isolated
+root paths, session identifiers and the echo process-group ID are normalized;
+no secrets or personal content are present. These captures preserve the real
+single-chunk response hook shape; the E2E driver also exercises multi-chunk
+streaming. The replay writes transcript snapshots at the observed response
+boundaries, including duplicate full-message tool updates, and checks the actual
+bridge tree. Native AfterModel strips cached/thinking counts; exact cached=3
+and thoughts=0 are recovered from settled native JSONL records.
+
+Mocks do not qualify Code Assist/OAuth, real transport failure/retry behavior,
+Windows hooks, native subagent support, or production Respan ingestion.

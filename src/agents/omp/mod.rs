@@ -2,7 +2,7 @@
 mod setup;
 use crate::agents::{common::bridge, AgentSpec};
 pub const SPEC: AgentSpec = AgentSpec {
-    kind: "omp", display: "omp", hook: bridge::hook, plan: setup::plan, reply: None,
+    kind: "omp", display: "omp", hook: bridge::hook, plan: setup::plan, reply: None, settle: None,
 };
 
 #[cfg(test)]

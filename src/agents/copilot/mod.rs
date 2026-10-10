@@ -71,6 +71,7 @@ fn handle(ctx: &mut HookCtx, payload: &Value, configured: Option<&str>) -> Resul
     }
     let queued = Queued { payload, configured: configured.map(str::to_owned), metadata: ctx.metadata.clone(), run_id: ctx.run_id.clone(), proxy_active: ctx.proxy_active, exporter: std::env::var_os("COPILOT_OTEL_FILE_EXPORTER_PATH").is_some() };
     ctx.save(&format!("queue-{}-{}.json", ctx.now_ns(), crate::record::random_id()?), &queued)?;
+    ctx.mark_settle_pending()?;
     let Some(_lock) = ctx.try_lock("copilot")? else { return Ok(()); };
     drain_queue(ctx)
 }
@@ -128,7 +129,9 @@ fn process(ctx: &mut HookCtx, payload: &Value, configured: Option<&str>, exporte
     }
     ingest(ctx, &state, events)?;
     if state.turns.len() > 128 && state.turns.first().is_some_and(|t| t.settled) { state.turns.remove(0); }
-    ctx.save(&key, &state)
+    ctx.save(&key, &state)?;
+    if state.turns.iter().any(|t| t.end.is_some() && !t.settled) { ctx.mark_settle_pending()?; }
+    Ok(())
 }
 fn ingest(ctx: &mut HookCtx, state: &State, events: Vec<Event>) -> Result<()> {
     if events.is_empty() { return Ok(()); }

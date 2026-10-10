@@ -9,6 +9,7 @@ pub const SPEC: AgentSpec = AgentSpec {
     hook: bridge::hook,
     plan: setup::plan,
     reply: None,
+    settle: None,
 };
 
 #[cfg(test)]

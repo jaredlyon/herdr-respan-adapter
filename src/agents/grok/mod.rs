@@ -52,7 +52,9 @@ fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> {
         .iter().any(|name| std::env::var(name).is_ok_and(|url| url.contains("api.respan.ai")));
     let batch = normalize(&payload, &mut state, now, duplicate_models)?;
     bridge::ingest(ctx, batch)?;
-    save_state(ctx, &key, &mut state)
+    save_state(ctx, &key, &mut state)?;
+    if state.settle_left > 0 { ctx.mark_settle_pending()?; }
+    Ok(())
 }
 
 

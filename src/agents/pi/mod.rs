@@ -4,5 +4,5 @@ mod setup;
 use crate::agents::{common::bridge, AgentSpec};
 
 pub const SPEC: AgentSpec = AgentSpec {
-    kind: "pi", display: "pi", hook: bridge::hook, plan: setup::plan, reply: None,
+    kind: "pi", display: "pi", hook: bridge::hook, plan: setup::plan, reply: None, settle: None,
 };

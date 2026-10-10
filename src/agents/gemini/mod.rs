@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::{BTreeMap, VecDeque}, path::{Path, PathBuf}};
 
-pub const SPEC: AgentSpec = AgentSpec { kind: "gemini", display: "Gemini CLI", hook, plan: setup::plan, reply: None };
+pub const SPEC: AgentSpec = AgentSpec { kind: "gemini", display: "Gemini CLI", hook, plan: setup::plan, reply: None, settle: None };
 
 #[derive(Default, Serialize, Deserialize)]
 struct State {
@@ -107,7 +107,7 @@ fn next_tool_id(state: &mut State, payload: &Value) -> Result<String> {
 fn ensure_turn(state: &mut State, payload: &Value, now: u64, events: &mut Vec<Event>) -> String {
     state.turn.get_or_insert_with(|| {
         let id = format!("turn-{}", text(payload, "timestamp").unwrap_or("unknown"));
-        events.push(Event::TurnStart { turn_id: id.clone(), ts_ns: now, prompt: None }); id
+        events.push(Event::TurnStart { turn_id: id.clone(), ts_ns: now, prompt: None, metadata: Default::default() }); id
     }).clone()
 }
 fn start_request(ctx: &HookCtx, payload: &Value, now: u64) -> Result<Request> {
@@ -166,7 +166,7 @@ fn close_request(state: &mut State, payload: &Value, now: u64, events: &mut Vec<
     }
     let output = request.text.map(|text| json!([{"role":"assistant", "content":text}]));
     let interrupted = request.chunks == 0;
-    events.push(Event::Chat { turn_id: state.turn.clone().expect("request has turn"), id: request.id, parent_id: None, start_ns: request.start, end_ns: request.end.max(now), model: request.model, provider: Some("google".into()), input: request.input, output, usage: Some(request.usage), cost_usd: None, aux_task: None, status: Some(if interrupted { "error" } else { "ok" }.into()), error: interrupted.then(|| "model response not observed".into()) });
+    events.push(Event::Chat { turn_id: state.turn.clone().expect("request has turn"), id: request.id, parent_id: None, start_ns: request.start, end_ns: request.end.max(now), model: request.model, provider: Some("google".into()), input: request.input, output, usage: Some(request.usage), cost_usd: None, aux_task: None, status: Some(if interrupted { "error" } else { "ok" }.into()), error: interrupted.then(|| "model response not observed".into()), metadata: Default::default() });
     Ok(())
 }
 fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events: &mut Vec<Event>) -> Result<()> {
@@ -183,7 +183,7 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
             let turn_id = format!("turn-{}", text(payload, "timestamp").unwrap());
             state.turn = Some(turn_id.clone());
             let mut prompt = payload.get("prompt").cloned(); ctx.scrub_content(&mut prompt)?;
-            events.push(Event::TurnStart { turn_id, ts_ns: now, prompt });
+            events.push(Event::TurnStart { turn_id, ts_ns: now, prompt, metadata: Default::default() });
         }
         "BeforeModel" => { ensure_turn(state, payload, now, events); state.request = Some(start_request(ctx, payload, now)?); }
         "AfterModel" => {
@@ -219,12 +219,12 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
             let mut input = tool.as_ref().and_then(|t| t.input.clone()).or_else(|| payload.get("tool_input").cloned()); ctx.scrub_content(&mut input)?;
             let error = payload.pointer("/tool_response/error").filter(|e| !e.is_null()).map(|e| e.as_str().map(str::to_owned).unwrap_or_else(|| e.to_string()));
             let mut output = payload.get("tool_response").cloned(); ctx.scrub_content(&mut output)?;
-            events.push(Event::Tool { turn_id, id, parent_id: None, name: Some(name.into()), start_ns: tool.as_ref().map_or(now, |t| t.start), end_ns: now, input, output, status: Some(if error.is_some() { "error" } else { "ok" }.into()), error });
+            events.push(Event::Tool { turn_id, id, parent_id: None, name: Some(name.into()), start_ns: tool.as_ref().map_or(now, |t| t.start), end_ns: now, input, output, status: Some(if error.is_some() { "error" } else { "ok" }.into()), error, metadata: Default::default() });
         }
         "AfterAgent" | "SessionEnd" => {
             if let Some(turn_id) = state.turn.take() {
                 for tool in state.tools.drain(..) {
-                    events.push(Event::Tool { turn_id: turn_id.clone(), id: tool.id, parent_id: None, name: Some(tool.name), start_ns: tool.start, end_ns: now, input: tool.input, output: None, status: Some("error".into()), error: Some("tool response not observed".into()) });
+                    events.push(Event::Tool { turn_id: turn_id.clone(), id: tool.id, parent_id: None, name: Some(tool.name), start_ns: tool.start, end_ns: now, input: tool.input, output: None, status: Some("error".into()), error: Some("tool response not observed".into()), metadata: Default::default() });
                 }
                 let mut output = payload.get("prompt_response").cloned(); ctx.scrub_content(&mut output)?;
                 events.push(Event::TurnEnd { turn_id, ts_ns: now, output, status: Some(if event == "SessionEnd" { "error" } else { "ok" }.into()), error: (event == "SessionEnd").then(|| "session ended during agent turn".into()) });

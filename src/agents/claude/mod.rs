@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
-pub static SPEC: AgentSpec = AgentSpec { kind: "claude", display: "Claude Code", hook, plan: setup::plan, reply: None, settle: Some(settle_pending) };
+pub const SPEC: AgentSpec = AgentSpec { kind: "claude", display: "Claude Code", hook, plan: setup::plan, reply: None, settle: Some(settle_pending) };
 
 #[derive(Default, Serialize, Deserialize)]
 struct Session {

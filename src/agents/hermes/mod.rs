@@ -3,7 +3,7 @@ mod setup;
 use crate::{agents::{common::bridge, AgentSpec}, record::HookCtx, Result};
 
 pub const SPEC: AgentSpec = AgentSpec {
-    kind: "hermes", display: "Hermes Agent", hook, plan: setup::plan, reply: None,
+    kind: "hermes", display: "Hermes Agent", hook, plan: setup::plan, reply: None, settle: None,
 };
 fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> { bridge::hook(ctx, stdin) }
 

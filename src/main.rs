@@ -10,9 +10,13 @@ pub mod otlp;
 pub mod paths;
 pub mod record;
 pub mod redact;
+pub mod proxy;
+pub mod remote;
+pub mod run;
 pub mod setup;
 pub mod spool;
 pub mod status;
+pub mod ui;
 pub type Result<T, E = Box<dyn std::error::Error + Send + Sync>> = std::result::Result<T, E>;
 use cli::{Cli, Command};
 use paths::Paths;
@@ -37,7 +41,6 @@ fn credentials(paths: &Paths) -> Result<Option<config::Credentials>> {
     config::credentials(&paths.config, &paths::home()?, std::env::var("RESPAN_API_KEY").ok())
 }
 fn dispatch(cli: Cli) -> Result<()> {
-    if let Command::Later(command) = &cli.command { return Err(format!("not built yet: {command}").into()); }
     if cli.command == Command::Help {
         println!("herdr-respan hook <agent> | lifecycle | flush [--detach] | setup <agent>... [--all] [--dry-run] [--yes] [--project DIR] | remove <agent>... [--all] | status | pause/resume [--workspace ID] | test | startup | proxy serve | run | config export/import/push | ui <popup>");
         return Ok(());
@@ -113,7 +116,11 @@ fn dispatch(cli: Cli) -> Result<()> {
             }
             flush::run(&paths,&config::Config::load(&paths.config)?,credentials(&paths)?.as_ref())
         }
-        Command::Later(_) | Command::Help => unreachable!(),
+        Command::Proxy => proxy::serve(&paths, &config::Config::load(&paths.config)?),
+        Command::Run { args } => run::run(&paths, &config::Config::load(&paths.config)?, &args),
+        Command::Config { args } => remote::config(&paths, &config::Config::load(&paths.config)?, &args),
+        Command::Ui { args } => ui::popup(&paths, &config::Config::load(&paths.config)?, &args),
+        Command::Help => unreachable!(),
     }
 }
 fn select(names: &[String], all: bool) -> Result<Vec<&'static agents::AgentSpec>> {

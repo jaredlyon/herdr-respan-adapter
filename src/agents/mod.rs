@@ -1,11 +1,36 @@
 pub mod common;
+pub mod claude;
+pub mod codex;
+pub mod omp;
+pub mod pi;
+pub mod gemini;
+pub mod opencode;
+pub mod cursor;
+pub mod hermes;
+pub mod copilot;
+pub mod kimi;
+pub mod qwen;
+pub mod grok;
 pub struct AgentSpec {
     pub kind: &'static str,
     pub display: &'static str,
     pub hook: fn(&mut crate::record::HookCtx, &[u8]) -> crate::Result<()>,
     pub plan: fn(&crate::setup::SetupCtx) -> crate::Result<crate::setup::Plan>,
 }
-pub static AGENTS: &[AgentSpec] = &[];
+pub static AGENTS: &[AgentSpec] = &[
+    claude::SPEC,
+    codex::SPEC,
+    omp::SPEC,
+    pi::SPEC,
+    gemini::SPEC,
+    opencode::SPEC,
+    cursor::SPEC,
+    hermes::SPEC,
+    copilot::SPEC,
+    kimi::SPEC,
+    qwen::SPEC,
+    grok::SPEC,
+];
 pub fn find(kind: &str) -> Option<&'static AgentSpec> {
     #[cfg(test)] if kind == "fake" { return Some(&FAKE); }
     AGENTS.iter().find(|agent| agent.kind == kind)

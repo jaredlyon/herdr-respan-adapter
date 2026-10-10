@@ -1,81 +1,94 @@
-# MoonshotAI Kimi Code CLI
+# Kimi Code CLI 2.x
 
-Targets MoonshotAI `kimi-cli`, not a similarly named CLI. Shell hooks require
-**1.28.0 or newer**. Setup executes `kimi --version` when available on PATH,
-rejects an older or unparseable version, and otherwise prints an install notice.
-The current wire contract is source-validated against the revision below; all
-its newer optional fields are not guaranteed to exist in 1.28.0.
+Targets the official **Kimi Code CLI**, tested with `2.1.1` installed at
+`~/.local/share/kimi-code/bin/kimi`. Legacy Python MoonshotAI `kimi-cli` is
+not supported. Setup runs `kimi --version` on PATH and requires a 2.x version;
+legacy 1.x and its deprecation notice are refused with an explicit install/PATH
+message. Put the successor's bin directory ahead of any legacy shim.
 
 ## Setup
 
-Adds ten `[[hooks]]` entries to `$KIMI_SHARE_DIR/config.toml`, falling back to
-`~/.kimi/config.toml`: `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
-`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`,
-`SubagentStart`, `SubagentStop`. Each has `matcher = ""`, `timeout = 10`, and
-an absolute, shared-builder command invoking `herdr-respan hook kimi` with
-explicit state/config paths. Windows uses CMD quoting because Kimi invokes
-Python's shell subprocess runner. No script assets or credential edits.
+Adds eight `[[hooks]]` entries in `$KIMI_CODE_HOME/config.toml`, defaulting to
+`~/.kimi-code/config.toml`: `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, and `StopFailure`.
+Entries contain only `event`, `command`, and `timeout = 10`; omitting `matcher`
+matches all. Commands use the shared shell quoting builder (POSIX or CMD).
+Existing user/herdr `[[hooks]]` entries, order, and comments are preserved;
+remove deletes only our owned entries. No credentials or provider settings are
+changed. `--project` still selects this user-global config. `KIMI_SHARE_DIR`
+and legacy `~/.kimi` are never used.
 
-Existing entries (including herdr's) and TOML comments are preserved. Removal
-only removes the owned entries. Invalid MoonshotAI events such as
-`PermissionRequest`, `PermissionResult`, and `Interrupt` are never installed.
-`KIMI_CODE_HOME` and `~/.kimi-code` are deliberately not used. Existing invalid
-herdr entries are not repaired. `--project` still uses Kimi's global config;
-a separately selected native `--config-file` must be configured explicitly.
+The [official hooks reference](https://moonshotai.github.io/kimi-code/en/customization/hooks.md)
+is the source for the allowed config fields and event names. Hooks require
+`client_type = "kimi_code_cli"`, a native session ID and cwd. Foreign and legacy
+payloads are ignored. Live `UserPromptSubmit.prompt` is an array of content
+parts, not necessarily a string.
 
-## Native capture
+## Capture and limits
 
-- Turn boundaries and user prompt: hooks. Because another Stop hook can
-  continue the turn, final closure waits for wire `TurnEnd` when wire exists.
-- Tool timing, input, output and failure: hooks, joined by `tool_call_id`.
-- Successful model-step spans: `StepBegin`, `ContentPart`, and `StatusUpdate`
-  in `wire.jsonl`; `message_id` identifies the response. Total input tokens
-  are **input_other + input_cache_read + input_cache_creation** when all
-  components are known; missing counters stay null, never zero.
-- Subagents: wire `SubagentEvent.agent_id`, nested events and
-  `parent_tool_call_id` (legacy `task_tool_call_id` accepted). The subagent
-  span is parented to its spawning tool, child chat/tools to that subagent.
-  Hook agent names alone are not used to guess concurrent identity.
+The [data-locations reference](https://moonshotai.github.io/kimi-code/en/configuration/data-locations.md)
+establishes `$KIMI_CODE_HOME/sessions/<workDirKey>/<sessionId>/agents/main/wire.jsonl`.
+The adapter scans one bucket level for the unique native session ID and caches
+the path; ambiguous matches fail closed. Complete lines are incrementally tailed;
+late/partial records are retried by Core settlement. Queued hooks retain their
+original home, pane metadata, run ID and proxy mode. Historical records before
+the first hook are not replayed.
 
-Model/provider, reasoning usage and USD cost remain null: the durable wire
-source does not establish those values. Step spans are successful steps, not
-all failed/retried provider attempts. Input is null on chat spans because
-wire does not contain the full authoritative per-request input. Assistant
-output contains observed content parts. Compaction context size is not billed
-request usage. Proxy duplicate suppression, gating, caps, redaction, keys,
-parenting and spool delivery remain exclusively in Core.
+Kimi Code's durable wire schema differs from legacy kimi-cli:
 
-Session wire files are discovered at
-`<share>/sessions/<work-directory-hash>/<session-id>/wire.jsonl`. A unique
-native session ID is required; ambiguous directories fail closed for capture.
-The path is cached, avoiding another hashing dependency. Hook payloads are
-queued into private, Core-scrubbed adapter state before serialized translation,
-with their original pane metadata, run ID, proxy mode and relocated share path.
-The settle callback drains queued payloads and tails complete JSONL records;
-Core's detached flush retries late writes. Historical wire content preceding the first queued hook is skipped; newer
-records are buffered until their corresponding hook time so detached startup
-cannot accidentally discard the first turn. Wire lag exceeding those retries
-is picked up by a later hook/flush. With no wire file, hooks still capture
-turns/tools, but model steps and subagent identity are unavailable. Interruption
-without a terminal hook is closed by Core's turn timeout. Session translation
-state is retained to allow resume; this is not an independent export pipeline.
+- `turn.prompt` / `turn.ended`: turn ID, user content, final response, status.
+  Stop hooks do not prematurely close a durable turn.
+- `llm.request`: actual model ID and provider (not a config alias).
+- `context.append_loop_event` with `step.begin`, `content.part`, `step.end`:
+  one chat per settled step, response ID, assistant content, per-step usage.
+  Wire `time` is milliseconds, converted to nanoseconds.
+- `step.end.usage`: input = `inputOther + inputCacheRead + inputCacheCreation`
+  when all three are available; output = `output`. Unknown counters stay null.
+  Cumulative `usage.record` and context token estimates are ignored.
+- Native Pre/PostToolUse hooks plus wire `tool.call`: tool timing, input,
+  output and failure joined by `tool_call_id` / `toolCallId`.
 
-## Fixtures and checks
+Without a wire file, hooks still capture turns/tools, but no model spans or
+usage are invented. Full authoritative per-request chat input, reasoning token
+usage, cost, provider retries/failures, and child-agent identity are not
+established by these fixtures. **Successor subagent correlation is unimplemented**:
+child-agent wires and non-main `agentId` records are ignored, not guessed from
+legacy `SubagentEvent` or hook names. No subagent observer hooks are installed.
+Proxy duplicate suppression, gating, redaction, caps, and delivery belong to Core.
+Windows quoting compiles in CI but actual Windows hook execution is not qualified
+by this Linux run.
 
-All fixtures are **synthetic**, with no provider calls, real secrets or personal
-data. Source revision: MoonshotAI/kimi-cli
-`9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82`:
+## Live fixtures and regression checks
 
-- `fixtures/hooks.json`: [src/kimi_cli/hooks/events.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/hooks/events.py#L8-L151).
-- `fixtures/wire.jsonl`: [wire/types.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/wire/types.py#L38-L268),
-  [wire/file.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/src/kimi_cli/wire/file.py#L26-L48),
-  [kosong/message.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/packages/kosong/src/kosong/message.py#L84-L232),
-  [kosong/tooling/__init__.py](https://github.com/MoonshotAI/kimi-cli/blob/9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82/packages/kosong/src/kosong/tooling/__init__.py#L314-L320).
-- `fixtures/expected-batch.json`: golden shared bridge batch derived from
-  those synthetic inputs (six emitted spans).
+`fixtures/hooks.json` and `fixtures/wire.jsonl` were **captured live 2026-10-09
+against the loopback mock provider**, using Kimi Code CLI 2.1.1 on Spark,
+Linux aarch64. Evidence: `~/.hra-e2e/kimi/run-YaC0WhAW`. Paths/session IDs were
+scrubbed; provider keys are dummy and no real account was used. The wire fixture
+retains only records consumed by the parser, excluding system prompts,
+request bodies, and unrelated context/index events. It covers a Bash echo and
+two model steps. Old synthetic kimi-cli fixtures and their golden were removed.
 
-Tests cover the golden batch, idempotent shared-bridge spool tree, tool→subagent
-parentage, null model/unknown usage, legacy parent alias, foreign payload
-rejection, late partial records, final-close deferral, version gating, and
-TOML coexistence/idempotence/removal. No live Kimi, Windows shell execution,
-provider authentication, or Respan ingestion is claimed verified here.
+Tests replay the captures through the shared bridge and assert an idempotent
+turn → two chats + Bash tree, model/provider, exact input=11/output=7/cache=3,
+legacy/foreign rejection, modern discovery, late/partial settlement, original
+metadata/proxy mode, unknown usage, error turn status, and TOML coexistence with
+herdr/idempotent setup/remove.
+
+```sh
+export PATH="$HOME/.local/share/kimi-code/bin:$HOME/.local/bin:$PATH"
+cargo test agents::kimi
+cargo build --release
+HRA_BIN="$PWD/target/release/herdr-respan" bash scripts/e2e/run_kimi.sh
+```
+
+The real-agent driver uses isolated HOME/XDG/KIMI_CODE_HOME, disables telemetry
+and update preflight, and defines an `openai` provider pointing only at 127.0.0.1.
+`--prompt` is noninteractive; it is not combined with `--auto`. The two prompts
+produce exactly six OTLP spans in two traces: text turn → chat, tool turn →
+two chats + Bash echo. It checks parentage, exact usage, successful status,
+native session IDs, herdr pane/workspace/machine metadata, no delivery for the
+same tool prompt outside herdr, and semantic remove restoration. Raw hooks,
+wires, provider requests, stdout/stderr and OTLP remain under each
+`~/.hra-e2e/kimi/run-*`. No production configs, credentials, foreign herdr
+sessions, or real Respan/provider endpoints are touched. Authentication,
+real-network/Respan behavior, and successor subagents are not mock-qualified.

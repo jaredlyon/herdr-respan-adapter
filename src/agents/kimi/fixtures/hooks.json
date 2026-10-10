@@ -1,7 +1,83 @@
 [
-  {"hook_event_name":"SessionStart","session_id":"synthetic-session","cwd":"/synthetic/repo","source":"startup"},
-  {"hook_event_name":"UserPromptSubmit","session_id":"synthetic-session","cwd":"/synthetic/repo","prompt":"Inspect the synthetic project"},
-  {"hook_event_name":"PreToolUse","session_id":"synthetic-session","cwd":"/synthetic/repo","tool_name":"Agent","tool_input":{"prompt":"Inspect files"},"tool_call_id":"spawn-1"},
-  {"hook_event_name":"PostToolUse","session_id":"synthetic-session","cwd":"/synthetic/repo","tool_name":"Agent","tool_input":{"prompt":"Inspect files"},"tool_output":"Inspected files","tool_call_id":"spawn-1"},
-  {"hook_event_name":"Stop","session_id":"synthetic-session","cwd":"/synthetic/repo","stop_hook_active":false}
+  {
+    "hook_event_name": "SessionStart",
+    "session_id": "session_text",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "source": "startup",
+    "model": "mock",
+    "profile": "agent"
+  },
+  {
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "session_text",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "Say the deterministic mock text."
+      }
+    ],
+    "is_steer": false
+  },
+  {
+    "hook_event_name": "Stop",
+    "session_id": "session_text",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "stop_hook_active": false
+  },
+  {
+    "hook_event_name": "SessionStart",
+    "session_id": "session_tool",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "source": "startup",
+    "model": "mock",
+    "profile": "agent"
+  },
+  {
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "session_tool",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "prompt": [
+      {
+        "type": "text",
+        "text": "RUN_TOOL: execute echo hra-e2e then reply."
+      }
+    ],
+    "is_steer": false
+  },
+  {
+    "hook_event_name": "PreToolUse",
+    "session_id": "session_tool",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hra-e2e"
+    },
+    "tool_call_id": "call_hra_2"
+  },
+  {
+    "hook_event_name": "PostToolUse",
+    "session_id": "session_tool",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hra-e2e"
+    },
+    "tool_call_id": "call_hra_2",
+    "tool_output": "hra-e2e\n"
+  },
+  {
+    "hook_event_name": "Stop",
+    "session_id": "session_tool",
+    "cwd": "/synthetic/repo",
+    "client_type": "kimi_code_cli",
+    "stop_hook_active": false
+  }
 ]

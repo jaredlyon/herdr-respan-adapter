@@ -1,178 +1,120 @@
 use super::*;
 use crate::{config::Config, paths::Paths, record::SpanRecord};
-
-fn fixtures() -> Vec<Value> { serde_json::from_str(include_str!("fixtures/hooks.json")).unwrap() }
-fn fixture_batch() -> Batch {
-    let hooks = fixtures();
-    let mut session = Session { cwd: "/synthetic/repo".into(), ..Default::default() };
-    let mut events = vec![];
-    native(&mut session, &hooks[1], 2_000_000_000, &mut events);
-    for line in include_str!("fixtures/wire.jsonl").lines() {
-        let record: Value = serde_json::from_str(line).unwrap();
-        if let Some(ts) = record.get("timestamp").and_then(Value::as_f64) {
-            wire(&mut session, &record["message"], (ts * 1e9) as u64, None, 16384, &mut events, 0);
-        }
-    }
-    native(&mut session, &hooks[3], 4_100_000_000, &mut events);
-    complete_tools(&mut session, &mut events);
-    native(&mut session, &hooks[4], 5_000_000_000, &mut events);
-    Batch { v: 1, agent: "kimi".into(), session_id: "synthetic-session".into(), session_path: None,
-        cwd: Some(session.cwd), agent_version: None, events }
-}
+fn hooks() -> Vec<Value> { serde_json::from_str(include_str!("fixtures/hooks.json")).unwrap() }
+fn wire_records() -> Vec<Value> { include_str!("fixtures/wire.jsonl").lines().map(|l| serde_json::from_str(l).unwrap()).collect() }
 fn context(tmp: &crate::tests::Temp) -> HookCtx {
     HookCtx::new(Paths { state: tmp.path.join("state"), config: tmp.path.join("config") },
-        Config { customer_identifier: "synthetic-host".into(), ..Default::default() }, "kimi", BTreeMap::new(), None, false).unwrap()
+        Config::default(), "kimi", BTreeMap::new(), None, false).unwrap()
 }
 fn records(tmp: &crate::tests::Temp) -> Vec<SpanRecord> {
     crate::spool::ready(&tmp.path.join("state")).unwrap().into_iter().flat_map(|p|
-        std::fs::read_to_string(p).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect::<Vec<_>>()
+        std::fs::read_to_string(p).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect::<Vec<_>>()
     ).collect()
 }
-#[test] fn fixture_matches_batch_golden_and_spool_tree() {
-    let batch = fixture_batch();
-    let expected: Value = serde_json::from_str(include_str!("fixtures/expected-batch.json")).unwrap();
-    assert_eq!(serde_json::to_value(&batch).unwrap(), expected);
-    let tmp = crate::tests::Temp::new();
-    let mut ctx = context(&tmp);
-    bridge::ingest(&mut ctx, batch.clone()).unwrap();
-    bridge::ingest(&mut ctx, batch).unwrap();
-    let records = records(&tmp);
-    assert_eq!(records.len(), 6);
-    let root = "kimi:synthetic-session:2000000000";
-    let sub = records.iter().find(|r| r.span_key.ends_with(":sub:child-1")).unwrap();
-    assert_eq!(sub.parent_key, Some(format!("{root}:tool:spawn-1")));
-    for record in &records {
-        assert_eq!(record.thread_id.as_deref(), Some("synthetic-session"));
-        if record.log_type == "chat" { assert!(record.model.is_none()); }
-    }
-    let child = records.iter().find(|r| r.span_key.ends_with(":chat:child-response")).unwrap();
-    assert_eq!(child.parent_key, Some(format!("{root}:sub:child-1")));
-    let root_chat = records.iter().find(|r| r.span_key.ends_with(":chat:root-response")).unwrap();
-    assert_eq!(root_chat.usage.input_tokens, Some(18));
-}
-#[test] fn foreign_payloads_do_not_queue_or_emit() {
+#[test] fn captured_successor_wire_and_hooks_emit_exact_spool_tree() {
     let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
-    for payload in [json!({"hook_event_name":"Stop","session_id":"claude","cwd":"/repo","stop_hook_active":false,"transcript_path":"/claude.jsonl"}),
-        json!({"hookEventName":"Stop","sessionId":"grok","cwd":"/repo"}),
-        json!({"hook_event_name":"SessionStart","session_id":"copilot","cwd":"/repo","source":"startup","timestamp":"2026-01-01T00:00:00Z"}),
-        json!({"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/repo"}),
-        json!({"type":"turn_start","agent":"pi","session_id":"s"})] {
-        assert!(!valid(&payload)); hook(&mut ctx, &serde_json::to_vec(&payload).unwrap()).unwrap();
+    let rs = wire_records(); let hs = hooks();
+    let mut s = Session { wire: Some(tmp.path.join("wire.jsonl")), ..Default::default() };
+    let mut events = vec![];
+    for r in &rs {
+        let ts = r["time"].as_u64().unwrap() * 1_000_000;
+        wire(&mut s, r, ts, 16384, &mut events);
+        if r["event"]["type"] == "tool.call" { native(&mut s, &hs[5], ts, &mut events); }
+        if r["event"]["type"] == "tool.result" { native(&mut s, &hs[6], ts, &mut events); complete_tools(&mut s, &mut events); }
     }
-    assert_eq!(std::fs::read_dir(ctx.state_dir()).unwrap().count(), 0);
-    for hook in fixtures() { assert!(valid(&hook)); }
+    assert!(s.ended); assert!(s.steps.is_empty());
+    let batch = Batch { v:1, agent:"kimi".into(), session_id:"session_tool".into(), session_path:None, cwd:Some("/synthetic/repo".into()), agent_version:None, events };
+    bridge::ingest(&mut ctx, batch.clone()).unwrap(); bridge::ingest(&mut ctx, batch).unwrap();
+    let out = records(&tmp); assert_eq!(out.len(), 4);
+    let turn = out.iter().find(|r| r.log_type == "agent").unwrap();
+    assert_eq!(turn.trace_key.as_deref(), Some("kimi:session_tool:0"));
+    for r in out.iter().filter(|r| r.log_type == "chat") {
+        assert_eq!(r.parent_key.as_deref(), Some(turn.span_key.as_str()));
+        assert_eq!(r.model.as_deref(),Some("mock-model")); assert_eq!(r.provider.as_deref(),Some("openai"));
+        assert_eq!(r.usage.input_tokens,Some(11)); assert_eq!(r.usage.output_tokens,Some(7));
+        assert_eq!(r.usage.cache_read_input_tokens,Some(3)); assert_eq!(r.usage.cache_creation_input_tokens,Some(0));
+        assert!(r.input.is_none());
+    }
+    let tool = out.iter().find(|r| r.log_type == "tool").unwrap();
+    assert_eq!(tool.parent_key.as_deref(),Some(turn.span_key.as_str()));
+    assert_eq!(tool.name,"Bash"); assert_eq!(tool.input.as_ref().unwrap()["command"],"echo hra-e2e");
+    assert_eq!(tool.output.as_ref().unwrap(),"hra-e2e\n");
 }
-#[test] fn setup_coexists_with_herdr_and_roundtrips() {
-    let tmp = crate::tests::Temp::new();
-    let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
-    let ctx = crate::setup::SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
-    let plan = setup::make_plan(&ctx, "offline test".into()).unwrap();
-    let file = match &plan.edits[0] { crate::setup::Edit::TomlInsert { file, .. } => file.clone(), _ => panic!("not TOML") };
-    let original = "# user comment\ndefault_model = 'synthetic'\n[[hooks]]\nevent = 'SessionStart'\ncommand = 'herdr-agent-state'\nmatcher = ''\ntimeout = 10\n[models.synthetic]\nmodel = 'example'\n";
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap(); std::fs::write(&file, original).unwrap();
-    crate::setup::apply(&ctx, "kimi", &plan).unwrap();
-    let once = std::fs::read(&file).unwrap(); crate::setup::apply(&ctx, "kimi", &plan).unwrap(); assert_eq!(std::fs::read(&file).unwrap(), once);
-    let installed: toml::Value = toml::from_str(std::str::from_utf8(&once).unwrap()).unwrap();
-    let hooks = installed["hooks"].as_array().unwrap(); assert_eq!(hooks.len(), setup::EVENTS.len() + 1);
-    assert_eq!(hooks[0]["command"].as_str(), Some("herdr-agent-state"));
-    for hook in &hooks[1..] { assert!(setup::EVENTS.contains(&hook["event"].as_str().unwrap())); assert!(hook["command"].as_str().unwrap().contains("herdr-respan")); }
-    crate::setup::remove(&ctx, &["kimi".into()]).unwrap();
-    assert_eq!(toml::from_str::<toml::Value>(&std::fs::read_to_string(&file).unwrap()).unwrap(), toml::from_str::<toml::Value>(original).unwrap());
+#[test] fn validates_live_prompts_and_rejects_legacy_and_foreign_payloads() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    for h in hooks() { assert!(valid(&h)); }
+    let mut legacy=hooks()[1].clone(); legacy.as_object_mut().unwrap().remove("client_type");
+    let mut foreign=hooks()[1].clone(); foreign["client_type"]=json!("claude_code");
+    let mut malformed=hooks()[1].clone(); malformed["prompt"]=json!(42);
+    for h in [legacy,foreign,malformed,json!({"hook_event_name":"Stop","session_id":"s","cwd":"/repo","transcript_path":"/tmp/claude.jsonl"})] {
+        assert!(!valid(&h)); hook(&mut ctx,&serde_json::to_vec(&h).unwrap()).unwrap();
+    }
+    assert_eq!(std::fs::read_dir(ctx.state_dir()).unwrap().count(),0);
+}
+#[test] fn setup_coexists_with_herdr_and_restores_semantically() {
+    let tmp = crate::tests::Temp::new(); let paths=Paths { state:tmp.path.join("state"),config:tmp.path.join("config") };
+    let ctx=crate::setup::SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();
+    let plan=setup::make_plan(&ctx,"offline".into()).unwrap();
+    let file=match &plan.edits[0] { crate::setup::Edit::TomlInsert { file,.. }=>file.clone(), _=>panic!() };
+    assert_eq!(file,ctx.agent_home("KIMI_CODE_HOME",".kimi-code").join("config.toml"));
+    let original="# user comment\ndefault_model = 'mock'\n[[hooks]]\nevent = 'SessionStart'\ncommand = 'herdr-agent-state'\nmatcher = ''\ntimeout = 10\n[models.mock]\nmodel = 'example'\n";
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap(); std::fs::write(&file,original).unwrap();
+    crate::setup::apply(&ctx,"kimi",&plan).unwrap(); let once=std::fs::read(&file).unwrap();
+    crate::setup::apply(&ctx,"kimi",&plan).unwrap(); assert_eq!(std::fs::read(&file).unwrap(),once);
+    let installed:toml::Value=toml::from_str(std::str::from_utf8(&once).unwrap()).unwrap();
+    let hs=installed["hooks"].as_array().unwrap(); assert_eq!(hs.len(),setup::EVENTS.len()+1);
+    assert_eq!(hs[0]["command"].as_str(),Some("herdr-agent-state"));
+    for h in &hs[1..] {
+        assert!(setup::EVENTS.contains(&h["event"].as_str().unwrap()));
+        assert!(h.as_table().unwrap().keys().all(|k| ["event","command","timeout","matcher"].contains(&k.as_str())));
+    }
+    crate::setup::remove(&ctx,&["kimi".into()]).unwrap();
+    assert_eq!(toml::from_str::<toml::Value>(&std::fs::read_to_string(&file).unwrap()).unwrap(),toml::from_str::<toml::Value>(original).unwrap());
     assert!(std::fs::read_to_string(file).unwrap().contains("# user comment"));
 }
-#[test] fn incremental_tail_keeps_partial_record_and_defers_final_closure() {
-    let tmp = crate::tests::Temp::new(); let ctx = context(&tmp);
-    let path = tmp.path.join("wire.jsonl"); std::fs::write(&path, "{\"type\":\"metadata\",\"protocol_version\":\"1.10\"}\n").unwrap();
-    let mut session = Session { wire: Some(path.clone()), ..Default::default() }; let mut events = vec![];
-    tail(&ctx, &mut session, &mut events).unwrap();
-    let hooks = fixtures(); native(&mut session, &hooks[1], 2_000_000_000, &mut events);
-    let line = "{\"timestamp\":2.1,\"message\":{\"type\":\"TurnBegin\",\"payload\":{\"user_input\":\"test\"}}}";
+#[test] fn discovers_only_successor_wire_and_rejects_ambiguous_paths() {
+    let tmp=crate::tests::Temp::new();
+    let legacy=tmp.path.join("sessions/wd_one/session_test/wire.jsonl");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap(); std::fs::write(&legacy,"").unwrap();
+    assert!(locate("session_test",Some(&tmp.path)).unwrap().is_none());
+    let modern=legacy.parent().unwrap().join("agents/main/wire.jsonl");
+    std::fs::create_dir_all(modern.parent().unwrap()).unwrap(); std::fs::write(&modern,"").unwrap();
+    assert_eq!(locate("session_test",Some(&tmp.path)).unwrap(),Some(modern));
+    assert!(locate("../escape",Some(&tmp.path)).unwrap().is_none());
+    let second=tmp.path.join("sessions/wd_two/session_test/agents/main/wire.jsonl");
+    std::fs::create_dir_all(second.parent().unwrap()).unwrap(); std::fs::write(&second,"").unwrap();
+    assert!(locate("session_test",Some(&tmp.path)).is_err());
+}
+#[test] fn late_partial_wire_settles_with_original_metadata_and_proxy_mode() {
+    let tmp=crate::tests::Temp::new(); let mut ctx=context(&tmp);
+    let path=tmp.path.join("wire.jsonl"); let rs=wire_records();
+    let first=rs[0].to_string(); std::fs::write(&path,&first).unwrap();
+    let mut s=Session { wire:Some(path.clone()), ..Default::default() }; let mut events=vec![];
+    tail_until(&ctx,&mut s,&mut events,u64::MAX).unwrap(); assert!(s.turn.is_none());
     use std::io::Write;
-    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(line.as_bytes()).unwrap();
-    tail(&ctx, &mut session, &mut events).unwrap(); assert!(session.awaiting_begin);
     std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"\n").unwrap();
-    tail(&ctx, &mut session, &mut events).unwrap(); assert!(!session.awaiting_begin);
-    native(&mut session, &hooks[4], 3_000_000_000, &mut events);
-    assert!(!events.iter().any(|e| matches!(e, Event::TurnEnd { .. })));
-    std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"{\"timestamp\":3.1,\"message\":{\"type\":\"TurnEnd\",\"payload\":{}}}\n").unwrap();
-    tail(&ctx, &mut session, &mut events).unwrap(); assert_eq!(events.iter().filter(|e| matches!(e, Event::TurnEnd { .. })).count(), 1);
-    tail(&ctx, &mut session, &mut events).unwrap(); assert_eq!(events.len(), 2);
-}
-#[test] fn unknown_usage_does_not_turn_into_zero_and_legacy_parent_alias() {
-    let mut s = Session { turn: Some("t".into()), ..Default::default() }; let mut events = vec![];
-    wire(&mut s, &json!({"type":"StatusUpdate","payload":{"context_tokens":1000}}), 10, None, 16384, &mut events, 0);
-    assert!(events.is_empty());
-    wire(&mut s, &json!({"type":"StatusUpdate","payload":{"message_id":"m","token_usage":{"input_other":4,"output":2}}}), 11, None, 16384, &mut events, 0);
-    if let Event::Chat { usage: Some(usage), .. } = &events[0] { assert_eq!(usage.input_tokens, None); assert_eq!(usage.cache_read_input_tokens, None); } else { panic!("not chat"); }
-    wire(&mut s, &json!({"type":"SubagentEvent","payload":{"agent_id":"child","task_tool_call_id":"spawn","event":{"type":"TurnBegin","payload":{"user_input":"test"}}}}), 12, None, 16384, &mut events, 0);
-    assert!(matches!(&events[1], Event::SubagentStart { parent_id: Some(id), .. } if id == "spawn"));
-}
-
-#[test] fn queued_hooks_settle_late_wire_into_spool() {
-    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
-    let wire_path = tmp.path.join("wire.jsonl");
-    std::fs::write(&wire_path, "{\"type\":\"metadata\",\"protocol_version\":\"1.10\"}\n").unwrap();
-    let mut state = State::default();
-    state.sessions.insert("synthetic-session".into(), Session { wire: Some(wire_path.clone()), ..Default::default() });
-    ctx.save("native.json", &state).unwrap();
-    let hooks = fixtures();
-    ctx.save("native-1.json", &Pending { payload: hooks[1].clone(), ts: 2_000_000_000, ..Default::default() }).unwrap();
-    assert!(settle(&mut ctx).unwrap());
-    std::fs::write(&wire_path, include_str!("fixtures/wire.jsonl")).unwrap();
-    ctx.save("native-2.json", &Pending { payload: hooks[3].clone(), ts: 4_100_000_000, ..Default::default() }).unwrap();
-    ctx.save("native-3.json", &Pending { payload: hooks[4].clone(), ts: 5_000_000_000, ..Default::default() }).unwrap();
-    assert!(!settle(&mut ctx).unwrap());
-    assert_eq!(records(&tmp).len(), 6);
-    assert!(!ctx.state_dir().join("native-1.json").exists());
-    assert!(!settle(&mut ctx).unwrap()); assert_eq!(records(&tmp).len(), 6);
-}
-
-#[test] fn native_only_tools_fail_without_invented_usage() {
-    let hooks = fixtures(); let mut s = Session::default(); let mut events = vec![];
-    native(&mut s, &hooks[1], 10, &mut events);
-    native(&mut s, &hooks[2], 20, &mut events);
-    let mut failure = hooks[3].clone();
-    failure["hook_event_name"] = json!("PostToolUseFailure"); failure["error"] = json!("synthetic failure");
-    native(&mut s, &failure, 30, &mut events); complete_tools(&mut s, &mut events);
-    native(&mut s, &hooks[4], 40, &mut events);
-    assert!(matches!(&events[1], Event::Tool { start_ns:20, end_ns:30, status:Some(status), .. } if status=="error"));
-    assert!(matches!(events[2], Event::TurnEnd { .. }));
-    assert!(!events.iter().any(|event| matches!(event, Event::Chat { .. } | Event::SubagentStart { .. })));
-}
-
-#[test] fn delayed_initial_drain_keeps_current_turn_and_original_pane() {
-    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
-    let wire_path = tmp.path.join("wire.jsonl"); std::fs::write(&wire_path, include_str!("fixtures/wire.jsonl")).unwrap();
-    let mut state = State::default();
-    state.sessions.insert("synthetic-session".into(), Session { wire: Some(wire_path), ..Default::default() });
-    ctx.save("native.json", &state).unwrap();
-    let hooks = fixtures();
-    for (index, payload, ts) in [(0, &hooks[0], 1_000_000_000), (1, &hooks[1], 2_000_000_000),
-        (2, &hooks[3], 4_100_000_000), (3, &hooks[4], 5_000_000_000)] {
-        ctx.save(&format!("native-{index}.json"), &Pending { payload: payload.clone(), ts,
-            metadata: BTreeMap::from([("herdr.pane_id".into(), json!("original-pane"))]),
-            run_id: Some("original-run".into()), proxy_active: true, ..Default::default() }).unwrap();
+    tail_until(&ctx,&mut s,&mut events,u64::MAX).unwrap(); assert_eq!(events.len(),1);
+    let mut state=State::default(); state.sessions.insert("session_tool".into(),Session { wire:Some(path.clone()), ..Default::default() }); ctx.save("native.json",&state).unwrap();
+    for (i,h) in [hooks()[3].clone(),hooks()[5].clone(),hooks()[6].clone(),hooks()[7].clone()].into_iter().enumerate() {
+        ctx.save(&format!("native-{i}.json"),&Pending {payload:h,ts:1791597079000000000+i as u64,
+            metadata:BTreeMap::from([("herdr.pane_id".into(),json!("original-pane"))]),proxy_active:true,run_id:Some("original-run".into()),..Default::default()}).unwrap();
     }
-    assert!(!settle(&mut ctx).unwrap());
-    let output = records(&tmp); assert_eq!(output.len(), 4); // both model-null chats are suppressed under proxy
-    assert!(output.iter().all(|r| r.run_id.as_deref()==Some("original-run") && r.metadata["herdr.pane_id"]=="original-pane"));
-    assert!(!ctx.proxy_active); assert!(ctx.run_id.is_none()); assert!(ctx.metadata.is_empty());
+    assert!(settle(&mut ctx).unwrap());
+    std::fs::write(&path,include_str!("fixtures/wire.jsonl")).unwrap();
+    // Reset the cursor because this test deliberately replaces the complete file.
+    let mut state:State=ctx.load("native.json").unwrap(); state.sessions.get_mut("session_tool").unwrap().cursor=Cursor::default();
+    ctx.save("native.json",&state).unwrap();
+    assert!(!settle(&mut ctx).unwrap()); let out=records(&tmp); assert_eq!(out.len(),2);
+    assert!(out.iter().all(|r|r.metadata["herdr.pane_id"]=="original-pane" && r.run_id.as_deref()==Some("original-run")));
+    assert!(!settle(&mut ctx).unwrap()); assert_eq!(records(&tmp).len(),2);
+    assert!(!ctx.proxy_active); assert!(ctx.run_id.is_none());
 }
-
-#[test] fn interrupted_subagent_is_not_reported_successful() {
-    let mut s = Session { turn: Some("t".into()), ..Default::default() }; let mut events = vec![];
-    wire(&mut s, &json!({"type":"StepInterrupted","payload":{}}), 10, Some("child"), 16384, &mut events, 0);
-    wire(&mut s, &json!({"type":"TurnEnd","payload":{}}), 11, Some("child"), 16384, &mut events, 0);
-    assert!(matches!(&events[0], Event::SubagentEnd { status:Some(status), .. } if status=="error"));
-}
-
-#[test] fn replayed_wire_begin_retains_native_turn_identity() {
-    let mut s = Session::default(); let mut events = vec![];
-    native(&mut s, &fixtures()[1], 10, &mut events);
-    let begin = json!({"type":"TurnBegin","payload":{"user_input":"test"}});
-    wire(&mut s, &begin, 11, None, 16384, &mut events, 0);
-    wire(&mut s, &json!({"type":"TurnEnd","payload":{}}), 12, None, 16384, &mut events, 0);
-    wire(&mut s, &begin, 11, None, 16384, &mut events, 0);
-    assert_eq!(s.turn.as_deref(), Some("10"));
-    assert_eq!(events.iter().filter(|e| matches!(e, Event::TurnStart { .. })).count(), 1);
+#[test] fn missing_usage_stays_unknown_and_turn_errors_are_not_success() {
+    let mut s=Session::default(); let mut events=vec![];
+    wire(&mut s,&json!({"type":"turn.prompt","agentId":"main","turnId":0,"input":[]}),10,16384,&mut events);
+    wire(&mut s,&json!({"type":"context.append_loop_event","agentId":"main","event":{"type":"step.end","uuid":"s","usage":{"inputOther":4,"output":2}}}),20,16384,&mut events);
+    if let Event::Chat {usage:Some(u),..}=&events[1] { assert_eq!(u.input_tokens,None); assert_eq!(u.cache_read_input_tokens,None); } else {panic!()}
+    wire(&mut s,&json!({"type":"turn.ended","agentId":"main","reason":"interrupted"}),30,16384,&mut events);
+    assert!(matches!(&events[2],Event::TurnEnd {status:Some(status),..} if status=="error"));
+    wire(&mut s,&json!({"type":"turn.ended","agentId":"main","reason":"completed"}),40,16384,&mut events); assert_eq!(events.len(),3);
 }

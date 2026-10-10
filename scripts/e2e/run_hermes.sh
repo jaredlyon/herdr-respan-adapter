@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 REAL_HOME=$HOME
+HRA_BIN=${HRA_BIN:-"$(cd "$(dirname "$0")/../.." && pwd)/target/release/herdr-respan"}
 source "$(dirname "$0")/lib.sh"
-# lib.sh defaults to the packaged binary; use this worktree's build unless overridden.
-if [[ $HRA_BIN == "$HRA_REPO/bin/herdr-respan.exe" ]]; then HRA_BIN="$HRA_REPO/target/release/herdr-respan"; fi
 hra_init hermes
 hra_start_mocks
 export HERMES_HOME="$HRA_ROOT/agent"

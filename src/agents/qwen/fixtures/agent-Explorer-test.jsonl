@@ -1,0 +1,1 @@
+{"uuid":"c1","parentUuid":null,"sessionId":"s","timestamp":"1970-01-01T00:00:04.000Z","type":"assistant","cwd":"/synthetic/repo","version":"0.14.0","agentId":"Explorer-test","agentName":"Explorer","isSidechain":true,"agentRunId":"run-test","agentRound":1,"message":{"role":"model","parts":[{"text":"Child done"}]},"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":2}}

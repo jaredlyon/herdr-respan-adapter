@@ -10,9 +10,10 @@ pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
         .replace("__HERDR_RESPAN_CONFIG__", &serde_json::to_string(&ctx.config_dir.to_string_lossy())?);
     Ok(Plan {
         edits: vec![
+            // Validate the config before staging either plugin asset.
+            Edit::Text { file: home.join("config.yaml"), id: "herdr-respan-hermes-enabled".into(), apply: enable, revert: disable },
             Edit::WriteFile { path: plugin.join("plugin.yaml"), contents: include_bytes!("assets/herdr-respan/plugin.yaml").to_vec(), id: "herdr-respan-hermes-manifest".into() },
             Edit::WriteFile { path: plugin.join("__init__.py"), contents: source.into_bytes(), id: "herdr-respan-hermes-observers".into() },
-            Edit::Text { file: home.join("config.yaml"), id: "herdr-respan-hermes-enabled".into(), apply: enable, revert: disable },
         ],
         notices: vec!["Hermes 0.18.0 supports turns, request usage, tools and children; auxiliary spans require a version with auxiliary observers (verified schema: 0.21.5). Gateway/Discord sessions are excluded. plugins.disabled wins over enabled; remove a pre-existing herdr-respan disabled entry yourself if applicable.".into()],
         ..Default::default()
@@ -56,7 +57,28 @@ fn scalar(value: &str) -> &str { value.trim().trim_matches(['\'', '"']) }
 fn boundary(lines: &[String], start: usize, depth: usize) -> usize {
     (start + 1..lines.len()).find(|&i| !content(&lines[i]).trim().is_empty() && indent(&lines[i]) <= depth).unwrap_or(lines.len())
 }
-fn key(line: &str, name: &str) -> bool { content(line).trim_start().strip_prefix(name).is_some_and(|s| s.starts_with(':')) }
+fn key(line: &str, name: &str) -> bool { content(line).trim_start().split_once(':').is_some_and(|(k, _)| scalar(k) == name) }
+// ponytail: fixed two/four-space edits; reject other layouts rather than implement a YAML parser.
+fn mapping_layout(lines: &[String], start: usize, end: usize) -> Result<()> {
+    let mut i = start + 1;
+    while i < end {
+        let item = content(&lines[i]).trim();
+        if item.is_empty() { i += 1; continue; }
+        let (name, tail) = item.split_once(':').ok_or("plugins requires plain block mapping keys")?;
+        if indent(&lines[i]) != 2 || name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err("plugins requires plain mapping keys indented exactly two spaces".into());
+        }
+        let next = boundary(lines, i, 2);
+        if !tail.trim().is_empty() && (i + 1..next).any(|n| !content(&lines[n]).trim().is_empty()) {
+            return Err("plugins inline values cannot have indented continuation lines".into());
+        }
+        if (i + 1..next).any(|n| key(&lines[n], "enabled")) {
+            return Err("plugins.enabled must be indented exactly two spaces".into());
+        }
+        i = next;
+    }
+    Ok(())
+}
 type FlowParts = (usize, usize, Vec<(usize, usize)>);
 fn flow_parts(line: &str) -> Result<FlowParts> {
     let open = line.find('[').ok_or("plugins.enabled must be a list")?;
@@ -69,7 +91,10 @@ fn flow_parts(line: &str) -> Result<FlowParts> {
             '\'' | '"' => quote = Some(c),
             '[' | '{' | '}' => return Err("plugins.enabled requires scalar plugin names".into()),
             ',' => { parts.push((start, i)); start = i + 1; },
-            ']' => { parts.push((start, i)); return Ok((open, i, parts)); },
+            ']' => {
+                if !line[i + 1..].trim().is_empty() { return Err("unsupported text after plugins.enabled flow list".into()); }
+                parts.push((start, i)); return Ok((open, i, parts));
+            },
             _ => {},
         }
     }
@@ -82,6 +107,9 @@ fn edit(text: &str, add: bool) -> Result<String> {
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let trailing = text.ends_with('\n');
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if lines.iter().any(|line| line[..line.len() - line.trim_start().len()].contains('\t')) {
+        return Err("tabs in YAML indentation are not safely editable".into());
+    }
     let plugins: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| indent(l) == 0 && key(l, "plugins")).map(|(i, _)| i).collect();
     if plugins.len() > 1 { return Err("duplicate plugins mapping".into()); }
     let Some(&p) = plugins.first() else {
@@ -91,11 +119,11 @@ fn edit(text: &str, add: bool) -> Result<String> {
     };
     if content(&lines[p]).trim() != "plugins:" { return Err("plugins must be a block mapping; flow mappings, aliases and legacy flat lists are not safely editable".into()); }
     let end = boundary(&lines, p, 0);
+    mapping_layout(&lines, p, end)?;
     let enabled: Vec<usize> = (p + 1..end).filter(|&i| indent(&lines[i]) == 2 && key(&lines[i], "enabled")).collect();
     if enabled.len() > 1 { return Err("duplicate plugins.enabled key".into()); }
     let Some(&e) = enabled.first() else {
         if !add { return Ok(text.into()); }
-        if (p + 1..end).any(|i| content(&lines[i]).trim_start().starts_with('-')) { return Err("legacy plugins list is not a plugins.enabled mapping".into()); }
         lines.splice(p + 1..p + 1, [format!("  enabled: {CREATED}"), "    - herdr-respan".into()]);
         return Ok(lines.join(newline) + if trailing { newline } else { "" });
     };
@@ -125,7 +153,11 @@ fn edit(text: &str, add: bool) -> Result<String> {
         for (i, line) in lines.iter().enumerate().take(list_end).skip(e + 1) {
             let item = content(line).trim();
             if item.is_empty() { continue; }
+            if indent(line) != 4 { return Err("plugins.enabled list entries must be indented exactly four spaces".into()); }
             let value = item.strip_prefix("- ").ok_or("plugins.enabled requires scalar list entries")?;
+            if value.trim().is_empty() || value.trim_start().starts_with(['&', '*', '!', '[', '{', '|', '>']) || value.contains(": ") {
+                return Err("plugins.enabled requires scalar plugin names without aliases, tags or nested values".into());
+            }
             if scalar(value) == "herdr-respan" { ours.push(i); }
         }
         if add {
@@ -168,6 +200,49 @@ mod tests {
         for bad in ["plugins: {enabled: []}\n", "plugins: [old]\n", "plugins:\n  enabled: true\n", "plugins:\n  enabled: *alias\n", "plugins:\n  - legacy\n"] { assert!(enable(bad).is_err()); }
         let existing = "plugins:\n  enabled: ['herdr-respan'] # already present\n";
         assert_eq!(enable(existing).unwrap(), existing);
+    }
+    fn unsupported_layouts() -> [&'static str; 13] {
+        [
+            "plugins:\n    enabled: [herdr-agent-state]\n",
+            "plugins:\n    enabled:\n        - herdr-agent-state\n",
+            "plugins:\n    enabled: [herdr-respan]\n",
+            "plugins:\n    disabled: []\n",
+            "plugins:\n  disabled: []\n    enabled: [herdr-agent-state]\n",
+            "plugins:\n  enabled:\n      - herdr-agent-state\n",
+            "plugins:\n  enabled:\n    - herdr-agent-state\n      - other\n",
+            "plugins:\n  enabled: [herdr-agent-state]\n    disabled: []\n",
+            "plugins:\n\tenabled: [herdr-agent-state]\n",
+            "plugins:\n  'enabled': [herdr-agent-state]\n",
+            "'plugins':\n  enabled: [herdr-agent-state]\n",
+            "plugins:\n  enabled:\n    - name: nested\n",
+            "plugins:\n  enabled: [herdr-agent-state] trailing\n",
+        ]
+    }
+    #[test]
+    fn unsupported_indentation_is_rejected_before_assets_are_staged() {
+        let tmp = crate::tests::Temp::new();
+        let ctx = SetupCtx { home: tmp.path.join("home"), state_dir: tmp.path.join("state"), config_dir: tmp.path.join("config"), project: None, binary: tmp.path.join("state/bin/herdr-respan") };
+        let mut plan = plan(&ctx).unwrap();
+        let root = tmp.path.join("hermes");
+        for edit in &mut plan.edits {
+            match edit {
+                Edit::WriteFile { path, .. } => *path = root.join("plugins/herdr-respan").join(path.file_name().unwrap()),
+                Edit::Text { file, .. } => *file = root.join("config.yaml"),
+                _ => unreachable!(),
+            }
+        }
+        assert!(matches!(plan.edits.first(), Some(Edit::Text { .. })));
+        std::fs::create_dir_all(&root).unwrap();
+        for original in unsupported_layouts() {
+            assert!(enable(original).is_err(), "enable accepted {original:?}");
+            assert!(disable(original).is_err(), "disable accepted {original:?}");
+            std::fs::write(root.join("config.yaml"), original).unwrap();
+            assert!(crate::setup::preview(&ctx, "hermes", &plan).is_err());
+            assert!(crate::setup::apply(&ctx, "hermes", &plan).is_err());
+            assert_eq!(std::fs::read_to_string(root.join("config.yaml")).unwrap(), original);
+            assert!(!root.join("plugins").exists());
+            assert!(!ctx.state_dir.join("owned.json").exists());
+        }
     }
     #[test]
     fn actual_setup_remove_preserves_config_and_assets() {

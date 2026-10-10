@@ -6,7 +6,7 @@ use crate::{agents::{AgentSpec, common::{bridge::{self, Batch, Event}, jsonl::{s
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
 pub const SPEC: AgentSpec = AgentSpec {kind:"qwen",display:"Qwen Code",hook,plan:setup::plan,reply:None,settle:Some(settle)};
 
@@ -35,11 +35,63 @@ fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> {
 }
 
 fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
-    let (Some(session), Some(event), Some(path), Some(cwd)) = (text(p,"session_id"),text(p,"hook_event_name"),text(p,"transcript_path"),text(p,"cwd")) else {return Ok(());};
-    let Some(ts) = text(p,"timestamp").and_then(timestamp_ns) else {return Ok(());};
+    let (Some(_session), Some(event), Some(path), Some(_cwd)) = (text(p,"session_id"),text(p,"hook_event_name"),text(p,"transcript_path"),text(p,"cwd")) else {return Ok(());};
+    if text(p,"timestamp").and_then(timestamp_ns).is_none() {return Ok(());}
     if !setup::EVENTS.contains(&event) || p.get("llm_response").is_some() || p.get("conversation_id").is_some()
         || p.get("permission_mode").is_some_and(|v| !["default","plan","auto_edit","auto","yolo"].contains(&v.as_str().unwrap_or(""))) {return Ok(());}
-    let _lock = ctx.lock("qwen-native")?;
+    let baseline = if event == "SessionStart" && text(p,"agent_id").is_none() {Some(jsonl::at_end(Path::new(path))?)} else {None};
+    let mut payload = p.clone();
+    // Retain only fields consumed by this parser; unused native content aliases never reach disk.
+    payload.as_object_mut().expect("validated payload").retain(|name, _| [
+        "session_id", "hook_event_name", "transcript_path", "cwd", "timestamp", "permission_mode",
+        "prompt_id", "agent_id", "agent_type", "agent_transcript_path", "tool_use_id", "tool_name",
+        "duration_ms", "prompt", "tool_input", "tool_response", "last_assistant_message", "error", "error_details"
+    ].contains(&name.as_str()));
+    for name in ["prompt", "tool_input", "tool_response", "last_assistant_message", "error", "error_details"] {
+        if let Some(field) = payload.get_mut(name) {
+            let mut content = Some(std::mem::take(field));
+            ctx.scrub_content(&mut content)?;
+            *field = content.unwrap_or(Value::Null);
+        }
+    }
+    let name = format!("queue-{:020}-{}.json", ctx.now_ns(), crate::record::random_id()?);
+    ctx.save(&name, &Queued {payload, baseline, metadata:ctx.metadata.clone(), run_id:ctx.run_id.clone(), proxy_active:ctx.proxy_active})?;
+    ctx.mark_settle_pending()?;
+    let Some(_lock) = ctx.try_lock("qwen-native")? else {return Ok(());};
+    drain(ctx)
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Queued {
+    payload: Value, baseline: Option<Cursor>, metadata: BTreeMap<String,Value>,
+    run_id: Option<String>, proxy_active: bool,
+}
+fn queued(ctx: &HookCtx) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(ctx.state_dir())? {
+        let path = entry?.path();
+        if path.file_name().is_some_and(|n|n.to_string_lossy().starts_with("queue-")) && path.extension().is_some_and(|e|e=="json") {files.push(path);}
+    }
+    files.sort();
+    Ok(files)
+}
+// Caller holds the native lock; each file is removed only after state and bridge acceptance.
+fn drain(ctx: &mut HookCtx) -> Result<()> {
+    for file in queued(ctx)? {
+        let queued: Queued = ctx.load(file.file_name().and_then(|n|n.to_str()).ok_or("invalid queue filename")?)?;
+        let metadata = std::mem::replace(&mut ctx.metadata, queued.metadata);
+        let run_id = std::mem::replace(&mut ctx.run_id, queued.run_id);
+        let proxy = std::mem::replace(&mut ctx.proxy_active, queued.proxy_active);
+        let result = process_locked(ctx, &queued.payload, queued.baseline);
+        ctx.metadata=metadata;ctx.run_id=run_id;ctx.proxy_active=proxy;
+        result?;
+        std::fs::remove_file(file)?;
+    }
+    Ok(())
+}
+fn process_locked(ctx: &mut HookCtx, p: &Value, baseline: Option<Cursor>) -> Result<()> {
+    let (Some(session), Some(event), Some(path), Some(cwd)) = (text(p,"session_id"),text(p,"hook_event_name"),text(p,"transcript_path"),text(p,"cwd")) else {return Ok(());};
+    let Some(ts) = text(p,"timestamp").and_then(timestamp_ns) else {return Ok(());};
     let state_key = key("session",session);
     let mut state: Session = ctx.load(&state_key)?;
     let child_id = text(p,"agent_id");
@@ -51,7 +103,7 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
     let mut batch = Batch {v:1,agent:"qwen".into(),session_id:session.into(),session_path:Some(path.into()),cwd:Some(cwd.into()),agent_version:None,events:Vec::new()};
     if event == "SessionStart" && child_id.is_none() {
         // A resumed session must not replay its historical requests as new usage.
-        prime(ctx, Path::new(path))?;
+        prime(ctx, Path::new(path), baseline)?;
         return Ok(());
     }
     if event == "UserPromptSubmit" && child_id.is_none() {
@@ -107,8 +159,8 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
     bridge::ingest(ctx,batch)
 }
 
-fn prime(ctx: &HookCtx, path: &Path) -> Result<()> {
-    let state = Transcript {cursor:jsonl::at_end(path)?,..Default::default()};
+fn prime(ctx: &HookCtx, path: &Path, baseline: Option<Cursor>) -> Result<()> {
+    let state = Transcript {cursor:match baseline {Some(cursor)=>cursor,None=>jsonl::at_end(path)?},..Default::default()};
     ctx.save(&key("transcript",&path.to_string_lossy()),&state)
 }
 fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str, parent: Option<&str>, batch: &mut Batch) -> Result<()> {
@@ -164,6 +216,9 @@ fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str
         let events = std::mem::take(&mut batch.events);
         bridge::ingest(ctx,Batch {events,..batch.clone()})?;
     }
+    let mut input = Some(Value::Array(std::mem::take(&mut state.input)));
+    ctx.scrub_content(&mut input)?;
+    state.input = match input {Some(Value::Array(values))=>values,Some(value)=>vec![value],None=>Vec::new()};
     ctx.save(&state_key,&state)
 }
 
@@ -205,6 +260,7 @@ fn remember_tail(ctx: &HookCtx, path: &Path, session: &str, turn: &str, parent: 
 }
 fn settle(ctx: &mut HookCtx) -> Result<bool> {
     let _lock = ctx.lock("qwen-native")?;
+    drain(ctx)?;
     let mut pending = false;
     for entry in std::fs::read_dir(ctx.state_dir())? {
         let entry = entry?;
@@ -220,5 +276,5 @@ fn settle(ctx: &mut HookCtx) -> Result<bool> {
         result?;
         if ctx.now_ns() >= tail.until_ns {std::fs::remove_file(entry.path())?;} else {pending=true;}
     }
-    Ok(pending)
+    Ok(pending || !queued(ctx)?.is_empty())
 }

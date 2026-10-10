@@ -118,3 +118,17 @@ fn records(tmp: &crate::tests::Temp) -> Vec<SpanRecord> {
     assert!(matches!(&events[2],Event::TurnEnd {status:Some(status),..} if status=="error"));
     wire(&mut s,&json!({"type":"turn.ended","agentId":"main","reason":"completed"}),40,16384,&mut events); assert_eq!(events.len(),3);
 }
+
+#[test]
+fn metadata_only_scrubs_hook_queue_and_future_wire_backlog() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.content_cap_bytes=0;
+    let mut p=hooks()[1].clone();for key in ["prompt","tool_input","tool_output","last_assistant_message"] {p[key]=json!("metadata-private-sentinel");}
+    hook(&mut ctx,&serde_json::to_vec(&p).unwrap()).unwrap();
+    for entry in std::fs::read_dir(ctx.state_dir()).unwrap() {let entry=entry.unwrap();if entry.path().extension().is_some_and(|s|s=="json") {assert!(!std::fs::read_to_string(entry.path()).unwrap().contains("metadata-private-sentinel"));}}
+    let path=tmp.path.join("wire.jsonl");let future=ctx.now_ns().saturating_add(60_000_000_000)/1_000_000;
+    std::fs::write(&path,json!({"type":"turn.prompt","agentId":"main","time":future,"turnId":0,"input":"metadata-private-sentinel"}).to_string()+"\n").unwrap();
+    let mut state=State::default();let mut session=Session {wire:Some(path),..Default::default()};let mut events=vec![];
+    tail_until(&ctx,&mut session,&mut events,ctx.now_ns()).unwrap();assert_eq!(session.backlog.len(),1);
+    state.sessions.insert("test".into(),session);save_state(&ctx,&mut state).unwrap();
+    let saved=std::fs::read_to_string(ctx.state_dir().join("native.json")).unwrap();assert!(!saved.contains("metadata-private-sentinel"));assert!(saved.contains("turn.prompt"));
+}

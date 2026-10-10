@@ -228,3 +228,57 @@ fn live_qwen_025_mock_text_and_tool_transcripts() {
     assert!(turns.iter().any(|turn| Some(&turn.span_key) == tool.parent_key.as_ref() && turn.trace_key == tool.trace_key));
     assert!(all.iter().all(|r| r.status == "ok"));
 }
+
+#[test]
+fn held_native_lock_queues_without_blocking_and_settle_keeps_context() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("missing.jsonl");
+    ctx.metadata.insert("herdr.pane_id".into(),json!("original-pane"));ctx.run_id=Some("original-run".into());
+    let held=ctx.try_lock("qwen-native").unwrap().unwrap();
+    let start=std::time::Instant::now();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    let mut pre=payload("PreToolUse","1970-01-01T00:00:02.000Z",&path);pre["tool_use_id"]=json!("queued-tool");
+    process(&mut ctx,&pre).unwrap();
+    let mut post=payload("PostToolUse","1970-01-01T00:00:03.000Z",&path);post["tool_use_id"]=json!("queued-tool");post["tool_name"]=json!("shell");
+    process(&mut ctx,&post).unwrap();
+    process(&mut ctx,&payload("Stop","1970-01-01T00:00:04.000Z",&path)).unwrap();
+    assert!(start.elapsed()<std::time::Duration::from_secs(1));
+    assert_eq!(queued(&ctx).unwrap().len(),4);assert!(records(&ctx).is_empty());
+    assert!(ctx.state_dir().join("settle-pending").exists());drop(held);
+    ctx.metadata.insert("herdr.pane_id".into(),json!("settler-pane"));ctx.run_id=Some("settler-run".into());
+    settle(&mut ctx).unwrap();assert!(queued(&ctx).unwrap().is_empty());
+    let all=records(&ctx);assert_eq!(all.len(),2);
+    let tool=all.iter().find(|r|r.log_type=="tool").unwrap();
+    assert_eq!((tool.start_ns,tool.end_ns),(2_000_000_000,3_000_000_000));
+    assert_eq!(tool.parent_key.as_deref(),Some("qwen:s:t1:turn"));
+    assert!(all.iter().all(|r|r.run_id.as_deref()==Some("original-run")&&r.metadata["herdr.pane_id"]=="original-pane"));
+    assert_eq!(ctx.run_id.as_deref(),Some("settler-run"));assert_eq!(ctx.metadata["herdr.pane_id"],"settler-pane");
+}
+
+#[test]
+fn metadata_only_queue_and_transcript_input_never_persist_content() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.content_cap_bytes=0;
+    let path=tmp.path.join("transcript.jsonl");std::fs::write(&path,"").unwrap();
+    let held=ctx.try_lock("qwen-native").unwrap().unwrap();
+    let mut prompt=payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path);
+    for name in ["prompt","tool_input","tool_response","last_assistant_message","error","error_details","input","output","message","tool_result"] {prompt[name]=json!("disk-content-sentinel");}
+    process(&mut ctx,&prompt).unwrap();
+    let files=queued(&ctx).unwrap();assert_eq!(files.len(),1);
+    let saved=std::fs::read_to_string(&files[0]).unwrap();assert!(!saved.contains("disk-content-sentinel"));assert!(saved.contains("t1"));
+    drop(held);settle(&mut ctx).unwrap();
+    std::fs::write(&path,format!("{}\n",json!({"sessionId":"s","promptId":"t1","type":"user","timestamp":"1970-01-01T00:00:02.000Z","message":{"role":"user","content":"disk-content-sentinel"}}))).unwrap();
+    process(&mut ctx,&payload("Stop","1970-01-01T00:00:03.000Z",&path)).unwrap();
+    let state:Transcript=ctx.load(&key("transcript",&path.to_string_lossy())).unwrap();assert!(state.input.is_empty());
+    fn inspect(path:&Path) {for entry in std::fs::read_dir(path).unwrap() {let path=entry.unwrap().path();if path.is_dir() {inspect(&path);} else {assert!(!String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("disk-content-sentinel"));}}}
+    inspect(&tmp.path.join("state"));
+}
+
+#[test]
+fn queued_session_start_uses_observed_resume_tail_not_drain_time() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("transcript.jsonl");std::fs::write(&path,"").unwrap();
+    let held=ctx.try_lock("qwen-native").unwrap().unwrap();
+    process(&mut ctx,&payload("SessionStart","1970-01-01T00:00:00.000Z",&path)).unwrap();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    process(&mut ctx,&payload("Stop","1970-01-01T00:00:06.000Z",&path)).unwrap();
+    std::fs::write(&path,include_str!("fixtures/transcript.jsonl")).unwrap();drop(held);
+    settle(&mut ctx).unwrap();assert_eq!(records(&ctx).len(),3);
+}

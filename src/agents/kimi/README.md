@@ -92,3 +92,5 @@ wires, provider requests, stdout/stderr and OTLP remain under each
 `~/.hra-e2e/kimi/run-*`. No production configs, credentials, foreign herdr
 sessions, or real Respan/provider endpoints are touched. Authentication,
 real-network/Respan behavior, and successor subagents are not mock-qualified.
+
+Metadata-only capture (`content_cap_bytes = 0`) strips native prompt/tool/output fields before queuing and removes content from future wire backlog rows and pending step buffers before state saves; event correlation and usage remain.

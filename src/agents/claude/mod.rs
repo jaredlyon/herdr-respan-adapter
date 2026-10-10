@@ -46,10 +46,13 @@ fn foreign(value: &Value) -> bool {
         || value.get("conversation_id").is_some() || value.get("generation_id").is_some()
 }
 fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
-    let payload: Value = match serde_json::from_slice(bytes) { Ok(value) => value, Err(_) => return Ok(()) };
+    let mut payload: Value = match serde_json::from_slice(bytes) { Ok(value) => value, Err(_) => return Ok(()) };
     if foreign(&payload) { return Ok(()); }
     let Some(session) = string(&payload, "session_id").filter(|s| valid_id(s)) else { return Ok(()); };
     if string(&payload, "hook_event_name").is_none() || string(&payload, "transcript_path").is_none() || string(&payload, "cwd").is_none() { return Ok(()); }
+    for field in ["prompt", "tool_input", "tool_response", "last_assistant_message"] {
+        if let Some(value) = payload.get_mut(field) { let mut content = Some(value.take()); ctx.scrub_content(&mut content)?; *value = content.unwrap_or(Value::Null); }
+    }
     let key = format!("native-{}-{}.json", ctx.now_ns(), crate::record::random_id()?);
     ctx.save(&key, &json!({"session":session,"received":ctx.now_ns(),"payload":payload,"metadata":ctx.metadata,"run_id":ctx.run_id,"proxy_active":ctx.proxy_active}))?;
     ctx.mark_settle_pending()?;
@@ -70,10 +73,23 @@ fn drain(ctx: &mut HookCtx) -> Result<()> {
         state.metadata = serde_json::from_value(queued["metadata"].clone())?; state.run_id=string(&queued,"run_id"); state.proxy_active=queued["proxy_active"]==true;
         let mut events = Vec::new();
         process(&mut state, &queued["payload"], queued["received"].as_u64().unwrap_or_else(||ctx.now_ns()), &mut events)?;
-        ingest(ctx, &state, events)?; ctx.save(&key, &state)?; std::fs::remove_file(path)?;
+        ingest(ctx, &state, events)?; save_session(ctx, &key, &mut state)?; std::fs::remove_file(path)?;
     }
     Ok(())
 }
+fn save_session(ctx: &HookCtx, key: &str, state: &mut Session) -> Result<()> {
+    ctx.scrub_content(&mut state.output)?;
+    for tool in state.tools.values_mut() { ctx.scrub_content(&mut tool.input)?; }
+    for child in state.children.values_mut() { ctx.scrub_content(&mut child.output)?; }
+    if ctx.config.content_cap_bytes == 0 {
+        for file in state.files.values_mut() {
+            file.input.clear();
+            if let Some(response) = &mut file.current { response.input.clear(); response.parts.clear(); }
+        }
+    }
+    ctx.save(key, state)
+}
+
 fn ingest(ctx: &mut HookCtx, state: &Session, mut events: Vec<Event>) -> Result<()> {
     if state.proxy_active {events.retain(|event|!matches!(event,Event::Chat {..}));}
     if events.is_empty() { return Ok(()); }
@@ -103,6 +119,7 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
     // Flush the preceding turn's delayed rows before opening the next one.
     read_transcripts(state, now, events)?;
     if event == "UserPromptSubmit" && child.is_none() {
+        if state.turn.is_some() && state.stopped.is_none() { state.stopped=Some(now);state.error=Some("turn superseded before Stop".into()); }
         close_turn(state, now, true, events);
         let completed:Vec<_>=state.children.iter().filter(|(_,child)|child.completed).map(|(id,child)|(id.clone(),child.path.clone())).collect();
         for (id,path) in completed {state.children.remove(&id);if let Some(path)=path {state.files.remove(&path);}}
@@ -134,7 +151,7 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
             let sub=state.children.entry(id).or_insert(Child {turn,start:now,..Default::default()});
             sub.end=Some(now);sub.output=payload.get("last_assistant_message").cloned();sub.path=string(payload,"agent_transcript_path").or_else(||sub.path.take());
         },
-        "Stop" | "StopFailure" | "SessionEnd" if child.is_none() => {state.stopped=Some(now);state.output=payload.get("last_assistant_message").cloned();state.error=string(payload,"error");},
+        "Stop" | "StopFailure" | "SessionEnd" if child.is_none() => {state.stopped=Some(now);state.output=payload.get("last_assistant_message").cloned();state.error=string(payload,"error").or_else(||(event!="Stop").then(||"turn failed or abandoned".into()));},
         _ => {},
     }
     announce_children(state,events);
@@ -206,7 +223,7 @@ fn settle(file:&mut Transcript,events:&mut Vec<Event>) {
     while file.seen.len()>8192 {file.seen.pop_first();}
     let output=json!([{"role":"assistant","content":response.parts}]);
     file.input.push(output[0].clone());
-    events.push(Event::Chat {metadata:BTreeMap::new(),turn_id:response.turn,id:if let Some(parent)=&file.parent {format!("{parent}:{}",response.id)} else {response.id},parent_id:file.parent.clone(),start_ns:response.start,end_ns:response.end,model:response.model,provider:Some("anthropic".into()),input:Some(json!(response.input)),output:Some(output),usage:response.usage,cost_usd:None,aux_task:None,status:Some("ok".into()),error:None});
+    events.push(Event::Chat {metadata:BTreeMap::new(),turn_id:response.turn,id:if let Some(parent)=&file.parent {format!("{parent}:{}",response.id)} else {response.id},parent_id:file.parent.clone(),start_ns:response.start,end_ns:response.end,model:response.model,provider:Some("anthropic".into()),input:Some(json!(response.input)),output:Some(output),usage:if response.finished {response.usage} else {None},cost_usd:None,aux_task:None,status:Some(if response.finished {"ok"} else {"error"}.into()),error:(!response.finished).then(||"incomplete model response".into())});
 }
 fn close_turn(state:&mut Session,now:u64,force:bool,events:&mut Vec<Event>) {
     for file in state.files.values_mut() {
@@ -235,7 +252,7 @@ fn settle_pending(ctx:&mut HookCtx)->Result<bool> {
     for path in files(ctx.state_dir(),"session-")? {
         let key=path.file_name().ok_or("missing state filename")?.to_string_lossy();
         let mut state:Session=ctx.load(&key)?;
-        let mut events=Vec::new();read_transcripts(&mut state,now,&mut events)?;close_turn(&mut state,now,false,&mut events);ingest(ctx,&state,events)?;ctx.save(&key,&state)?;
+        let mut events=Vec::new();read_transcripts(&mut state,now,&mut events)?;close_turn(&mut state,now,false,&mut events);ingest(ctx,&state,events)?;save_session(ctx,&key,&mut state)?;
         pending |= state.stopped.is_some() || state.children.values().any(|c|!c.completed && c.announced && c.end.is_some() && c.path.as_ref().is_some_and(|p|state.files.get(p).is_none_or(|f|f.cursor.offset==0 || f.current.is_some())));
     }
     Ok(pending || !files(ctx.state_dir(),"native-")?.is_empty())

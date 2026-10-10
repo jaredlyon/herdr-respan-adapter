@@ -187,3 +187,19 @@ fn captured_cli_turns_preserve_exact_model_rounds_usage_and_echo_tool() {
     }
     assert_eq!(all.iter().filter(|span| span.log_type == "chat" && span.output == Some(json!([{"role":"assistant","content":"hra-e2e mock response"}]))).count(), 2);
 }
+
+#[test]
+fn contended_hook_queues_metadata_only_content_and_drains_original_context() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.content_cap_bytes=0;
+    ctx.metadata.insert("herdr.pane_id".into(),json!("original-pane"));ctx.run_id=Some("original-run".into());
+    let mut values=fixture(&tmp.path.join("absent.jsonl"));
+    values[0]["prompt"]=json!("metadata-private-sentinel");values[1]["llm_request"]["messages"]=json!([{"role":"user","content":"metadata-private-sentinel"}]);values[2]["llm_response"]["text"]=json!("metadata-private-sentinel");
+    let lock=ctx.try_lock("gemini-native").unwrap().unwrap();let start=std::time::Instant::now();
+    for p in &values {hook(&mut ctx,&serde_json::to_vec(p).unwrap()).unwrap();}
+    assert!(start.elapsed()<std::time::Duration::from_millis(500));assert_eq!(queue_files(&ctx).unwrap().len(),6);
+    for file in queue_files(&ctx).unwrap() {assert!(!std::fs::read_to_string(file).unwrap().contains("metadata-private-sentinel"));}
+    drop(lock);ctx.metadata.clear();ctx.run_id=None;settle(&mut ctx).unwrap();assert!(queue_files(&ctx).unwrap().is_empty());
+    let all=records(&tmp);let chat=all.iter().find(|r|r.log_type=="chat").unwrap();assert!(chat.input.is_none()&&chat.output.is_none());
+    assert_eq!(chat.run_id.as_deref(),Some("original-run"));
+    assert_eq!(all.iter().find(|r|r.log_type=="agent").unwrap().metadata["herdr.pane_id"],json!("original-pane"));
+}

@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::{BTreeMap, VecDeque}, path::{Path, PathBuf}};
 
-pub const SPEC: AgentSpec = AgentSpec { kind: "gemini", display: "Gemini CLI", hook, plan: setup::plan, reply: None, settle: None };
+pub const SPEC: AgentSpec = AgentSpec { kind: "gemini", display: "Gemini CLI", hook, plan: setup::plan, reply: None, settle: Some(settle) };
 
 #[derive(Default, Serialize, Deserialize)]
 struct State {
@@ -58,48 +58,67 @@ fn identity(payload: &Value) -> bool {
     }
 }
 
-// Native tool hooks may run concurrently; bridge's lock only protects assembled events.
-struct Lock(PathBuf);
-impl Lock {
-    fn acquire(path: PathBuf) -> Result<Self> {
-        let start = std::time::Instant::now();
-        loop {
-            let mut options = std::fs::OpenOptions::new(); options.write(true).create_new(true);
-            #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-            match options.open(&path) {
-                Ok(_) => return Ok(Self(path)),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if path.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|t| t.as_secs() > 60) {
-                        match std::fs::remove_file(&path) { Ok(()) => continue, Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, Err(e) => return Err(e.into()) }
-                    }
-                    if start.elapsed().as_millis() >= 40 { return Err("Gemini adapter state busy".into()); }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-    }
+#[derive(Serialize, Deserialize)]
+struct Queued {
+    payload: Value, event_id: String, tool_fingerprint: String, now: u64,
+    metadata: BTreeMap<String,Value>, run_id: Option<String>, proxy_active: bool,
 }
-impl Drop for Lock { fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); } }
-
 fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
-    let payload: Value = serde_json::from_slice(bytes)?;
+    let mut payload: Value = serde_json::from_slice(bytes)?;
     if !identity(&payload) { return Ok(()); }
-    let session = text(&payload, "session_id").expect("validated session");
-    let key = format!("session-{}.json", digest(session.as_bytes()));
-    let _lock = Lock::acquire(ctx.state_dir().join(format!("{key}.lock")))?;
-    let mut state: State = ctx.load(&key)?;
     let event_id = digest(&serde_json::to_vec(&payload)?);
-    if state.seen.contains(&event_id) { return Ok(()); }
-    let now = ctx.now_ns();
-    let mut batch = Batch { v: 1, agent: "gemini".into(), session_id: session.into(), session_path: text(&payload, "transcript_path").map(str::to_owned), cwd: text(&payload, "cwd").map(str::to_owned), agent_version: None, events: Vec::new() };
-    translate(ctx, &mut state, &payload, now, &mut batch.events)?;
-    bridge::ingest(ctx, batch)?;
-    state.seen.push_back(event_id);
-    while state.seen.len() > 1024 { state.seen.pop_front(); }
-    ctx.save(&key, &state)
+    let tool_fingerprint = digest(&serde_json::to_vec(&payload["tool_input"])?);
+    for field in ["prompt", "prompt_response", "tool_input", "tool_response"] {
+        if let Some(value)=payload.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); }
+    }
+    if let Some(value)=payload.pointer_mut("/llm_request/messages") { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); }
+    if let Some(response)=payload.get_mut("llm_response").and_then(Value::as_object_mut) {
+        for field in ["text", "candidates"] { if let Some(value)=response.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); } }
+    }
+    let queued=Queued {payload,event_id,tool_fingerprint,now:ctx.now_ns(),metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active};
+    ctx.save(&format!("queue-{}-{}.json",ctx.now_ns(),crate::record::random_id()?),&queued)?;
+    ctx.mark_settle_pending()?;
+    let Some(_lock)=ctx.try_lock("gemini-native")? else {return Ok(());};
+    drain_queue(ctx)
+}
+fn queue_files(ctx: &HookCtx) -> Result<Vec<PathBuf>> {
+    let mut files=std::fs::read_dir(ctx.state_dir())?.filter_map(|e|e.ok().map(|e|e.path())).filter(|p|p.file_name().is_some_and(|s|s.to_string_lossy().starts_with("queue-")) && p.extension().is_some_and(|s|s=="json")).collect::<Vec<_>>();
+    files.sort();Ok(files)
+}
+fn drain_queue(ctx: &mut HookCtx) -> Result<()> {
+    for file in queue_files(ctx)? {
+        let queued:Queued=serde_json::from_slice(&std::fs::read(&file)?)?;
+        let metadata=std::mem::replace(&mut ctx.metadata,queued.metadata);
+        let run=std::mem::replace(&mut ctx.run_id,queued.run_id);
+        let proxy=std::mem::replace(&mut ctx.proxy_active,queued.proxy_active);
+        let result=process(ctx,queued.payload,queued.event_id,queued.tool_fingerprint,queued.now);
+        ctx.metadata=metadata;ctx.run_id=run;ctx.proxy_active=proxy;
+        result?;std::fs::remove_file(file)?;
+    }
+    Ok(())
+}
+fn settle(ctx: &mut HookCtx) -> Result<bool> {
+    let _lock=ctx.lock("gemini-native")?;drain_queue(ctx)?;
+    Ok(!queue_files(ctx)?.is_empty())
+}
+fn process(ctx: &mut HookCtx, mut payload: Value, event_id: String, tool_fingerprint: String, now: u64) -> Result<()> {
+    let session=text(&payload,"session_id").ok_or("missing Gemini session")?.to_owned();
+    let key=format!("session-{}.json",digest(session.as_bytes()));
+    let mut state:State=ctx.load(&key)?;
+    if state.seen.contains(&event_id) {return Ok(());}
+    payload["herdr_respan_tool_fingerprint"]=json!(tool_fingerprint);
+    let mut batch=Batch {v:1,agent:"gemini".into(),session_id:session,session_path:text(&payload,"transcript_path").map(str::to_owned),cwd:text(&payload,"cwd").map(str::to_owned),agent_version:None,events:Vec::new()};
+    translate(ctx,&mut state,&payload,now,&mut batch.events)?;
+    bridge::ingest(ctx,batch)?;
+    state.seen.push_back(event_id);while state.seen.len()>1024 {state.seen.pop_front();}
+    if let Some(request)=&mut state.request {ctx.scrub_content(&mut request.input)?;ctx.scrub_content(&mut request.text)?;}
+    for tool in &mut state.tools {ctx.scrub_content(&mut tool.input)?;}
+    ctx.save(&key,&state)
 }
 
+fn tool_fingerprint(payload: &Value) -> Result<String> {
+    Ok(text(payload,"herdr_respan_tool_fingerprint").map(str::to_owned).unwrap_or(digest(&serde_json::to_vec(&payload["tool_input"])?)))
+}
 fn next_tool_id(state: &mut State, payload: &Value) -> Result<String> {
     state.tool_sequence = state.tool_sequence.checked_add(1).ok_or("Gemini tool sequence exhausted")?;
     Ok(format!("tool-{}-{}", text(payload, "timestamp").expect("validated timestamp"), state.tool_sequence))
@@ -207,12 +226,12 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
             ensure_turn(state, payload, now, events);
             let mut input = payload.get("tool_input").cloned(); ctx.scrub_content(&mut input)?;
             let id = next_tool_id(state, payload)?;
-            state.tools.push_back(Tool { id, name: text(payload, "tool_name").unwrap().into(), input, fingerprint: digest(&serde_json::to_vec(&payload["tool_input"])?), start: now });
+            state.tools.push_back(Tool { id, name: text(payload, "tool_name").unwrap().into(), input, fingerprint: tool_fingerprint(payload)?, start: now });
         }
         "AfterTool" => {
             let turn_id = ensure_turn(state, payload, now, events);
             let name = text(payload, "tool_name").unwrap();
-            let fingerprint = digest(&serde_json::to_vec(&payload["tool_input"])?);
+            let fingerprint = tool_fingerprint(payload)?;
             let index = state.tools.iter().position(|tool| tool.name == name && tool.fingerprint == fingerprint);
             let tool = index.and_then(|i| state.tools.remove(i));
             let id = match &tool { Some(tool) => tool.id.clone(), None => next_tool_id(state, payload)? };

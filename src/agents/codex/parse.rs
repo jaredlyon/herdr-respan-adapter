@@ -35,6 +35,11 @@ fn content(items: &mut Vec<Value>) -> Option<Value> {
     if items.is_empty() { None } else { Some(Value::Array(std::mem::take(items))) }
 }
 impl Stream {
+    pub fn scrub_content(&mut self, ctx: &crate::record::HookCtx) -> crate::Result<()> {
+        if ctx.config.content_cap_bytes == 0 { self.input.clear();self.output.clear(); }
+        for tool in self.tools.values_mut() { ctx.scrub_content(&mut tool.input)?; }
+        Ok(())
+    }
     pub fn spawn_parent(&self, child: &str) -> Option<String> {
         self.spawned.get(child).cloned().or_else(|| self.tools.iter().filter(|(_, t)| t.name == "spawn_agent").max_by_key(|(_, t)| t.start).map(|(id, _)| id.clone()))
     }

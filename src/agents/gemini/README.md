@@ -132,3 +132,5 @@ and thoughts=0 are recovered from settled native JSONL records.
 
 Mocks do not qualify Code Assist/OAuth, real transport failure/retry behavior,
 Windows hooks, native subagent support, or production Respan ingestion.
+
+Native hooks persist a scrubbed queue and use nonblocking state-lock acquisition. The lock holder or detached settlement drains queued hooks with their original timestamp, pane and run context. Metadata-only mode strips hook content before queue writes, preserving argument hashes for tool matching and model/usage metadata.

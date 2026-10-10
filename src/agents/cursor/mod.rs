@@ -7,10 +7,11 @@ use crate::{agents::{common::bridge, AgentSpec}, record::HookCtx, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::{collections::{BTreeMap, BTreeSet}, path::PathBuf};
 
 pub const EVENTS: &[&str] = &["postToolUse", "postToolUseFailure", "afterAgentResponse", "stop"];
 pub const SPEC: AgentSpec = AgentSpec {
-    kind: "cursor", display: "Cursor Agent", hook, plan: setup::plan, reply: Some(reply), settle: None,
+    kind: "cursor", display: "Cursor Agent", hook, plan: setup::plan, reply: Some(reply), settle: Some(settle),
 };
 
 fn reply(stdin: &[u8]) -> String {
@@ -47,17 +48,79 @@ fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> {
     let grok = ["GROK_HOOK_EVENT", "GROK_SESSION_ID", "GROK_HOOK_NAME"]
         .iter().any(|key| std::env::var_os(key).is_some());
     if !identify(&payload, grok) { return Ok(()); }
+    if text(&payload, "hook_event_name") == Some("afterAgentResponse") && text(&payload, "text").is_none() {return Ok(());}
     let key = response_key(&payload);
-    let _lock = ctx.lock(&key)?;
+    let now = ctx.now_ns();
+    let mut payload = payload;
+    payload.as_object_mut().expect("validated payload").retain(|name, _| [
+        "conversation_id", "generation_id", "cursor_version", "hook_event_name", "duration",
+        "transcript_path", "model", "model_id", "cwd", "workspace_roots", "tool_use_id", "tool_name",
+        "tool_input", "tool_output", "error_message", "text", "status", "input_tokens", "output_tokens",
+        "cache_read_tokens", "cache_write_tokens"
+    ].contains(&name.as_str()));
+    for name in ["tool_input", "tool_output", "error_message", "text"] {
+        if let Some(field) = payload.get_mut(name) {
+            let mut content = Some(std::mem::take(field));
+            ctx.scrub_content(&mut content)?;
+            *field = content.unwrap_or(Value::Null);
+        }
+    }
+    let name = format!("queue-{key}-{now:020}-{}.json", crate::record::random_id()?);
+    ctx.save(&name, &Queued {payload, now, metadata:ctx.metadata.clone(), run_id:ctx.run_id.clone(), proxy_active:ctx.proxy_active})?;
+    ctx.mark_settle_pending()?;
+    let Some(_lock) = ctx.try_lock(&key)? else {return Ok(());};
+    drain(ctx, &key)
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Queued {
+    payload: Value, now: u64, metadata: BTreeMap<String,Value>, run_id: Option<String>, proxy_active: bool,
+}
+fn queued(ctx: &HookCtx, key: Option<&str>) -> Result<Vec<PathBuf>> {
+    let prefix = key.map_or_else(|| "queue-".into(), |key|format!("queue-{key}-"));
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(ctx.state_dir())? {
+        let path = entry?.path();
+        if path.file_name().is_some_and(|n|n.to_string_lossy().starts_with(&prefix)) && path.extension().is_some_and(|e|e=="json") {files.push(path);}
+    }
+    files.sort();
+    Ok(files)
+}
+fn drain(ctx: &mut HookCtx, key: &str) -> Result<()> {
+    for file in queued(ctx, Some(key))? {
+        let queued: Queued = ctx.load(file.file_name().and_then(|n|n.to_str()).ok_or("invalid queue filename")?)?;
+        let metadata = std::mem::replace(&mut ctx.metadata, queued.metadata);
+        let run_id = std::mem::replace(&mut ctx.run_id, queued.run_id);
+        let proxy = std::mem::replace(&mut ctx.proxy_active, queued.proxy_active);
+        let result = process(ctx, &queued.payload, queued.now);
+        ctx.metadata=metadata;ctx.run_id=run_id;ctx.proxy_active=proxy;
+        result?;
+        std::fs::remove_file(file)?;
+    }
+    Ok(())
+}
+fn settle(ctx: &mut HookCtx) -> Result<bool> {
+    let mut keys = BTreeSet::new();
+    for file in queued(ctx, None)? {
+        let queued: Queued = ctx.load(file.file_name().and_then(|n|n.to_str()).ok_or("invalid queue filename")?)?;
+        keys.insert(response_key(&queued.payload));
+    }
+    for key in keys {
+        let _lock = ctx.lock(&key)?;
+        drain(ctx, &key)?;
+    }
+    Ok(!queued(ctx, None)?.is_empty())
+}
+fn process(ctx: &mut HookCtx, payload: &Value, now: u64) -> Result<()> {
+    let key = response_key(payload);
     let event = text(&payload, "hook_event_name").unwrap_or_default();
     if event == "afterAgentResponse" {
-        let Some(output) = text(&payload, "text") else { return Ok(()); };
-        let mut response = Response { output: Some(json!(output)) };
+        let mut response = Response { output: payload.get("text").filter(|v| !v.is_null()).cloned() };
         ctx.scrub_content(&mut response.output)?;
         ctx.save(&key, &response)?;
     }
     let response: Response = if event == "stop" { ctx.load(&key)? } else { Response::default() };
-    if let Some(batch) = translate(&payload, ctx.now_ns(), response.output)? {
+    if let Some(batch) = translate(payload, now, response.output)? {
         bridge::ingest(ctx, batch)?;
         if event == "stop" {
             match std::fs::remove_file(ctx.state_dir().join(key)) {
@@ -92,7 +155,7 @@ fn translate(payload: &Value, now: u64, output: Option<Value>) -> Result<Option<
             }));
         },
         "afterAgentResponse" => {
-            if text(payload, "text").is_none() { return Ok(None); }
+            if payload.get("text").is_none() { return Ok(None); }
         },
         "stop" => {
             let Some(status) = text(payload, "status").filter(|s| ["completed", "aborted", "error"].contains(s)) else { return Ok(None); };

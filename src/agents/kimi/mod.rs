@@ -39,13 +39,34 @@ fn valid(p: &Value) -> bool {
     }
 }
 fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
-    let payload: Value = serde_json::from_slice(bytes)?;
+    let mut payload: Value = serde_json::from_slice(bytes)?;
     if !valid(&payload) { return Ok(()); }
+    scrub_payload(ctx, &mut payload)?;
     let ts = ctx.now_ns();
     ctx.save(&format!("native-{ts}-{}.json", crate::record::random_id()?), &Pending { payload, ts,
         home: Some(crate::paths::absolute(&home_dir()?)?), metadata: ctx.metadata.clone(), run_id: ctx.run_id.clone(), proxy_active: ctx.proxy_active })?;
     ctx.mark_settle_pending()?;
     Ok(())
+}
+fn scrub_payload(ctx: &HookCtx, payload: &mut Value) -> Result<()> {
+    for field in ["prompt", "tool_input", "tool_output", "tool_response", "last_assistant_message"] {
+        if let Some(value) = payload.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); }
+    }
+    Ok(())
+}
+fn save_state(ctx: &HookCtx, state: &mut State) -> Result<()> {
+    for session in state.sessions.values_mut() {
+        ctx.scrub_content(&mut session.output)?;
+        for pending in session.done.values_mut() { scrub_payload(ctx, &mut pending.payload)?; }
+        if ctx.config.content_cap_bytes == 0 {
+            for step in session.steps.values_mut() { step.output.clear();step.output_bytes=0; }
+            for row in &mut session.backlog {
+                if let Some(object)=row.as_object_mut() { object.retain(|key,_|["type","time","agentId","turnId","reason","model","provider","event"].contains(&key.as_str())); }
+                if let Some(event)=row.get_mut("event").and_then(Value::as_object_mut) { event.retain(|key,_|["type","uuid","stepUuid","toolCallId","messageId","usage"].contains(&key.as_str())); }
+            }
+        }
+    }
+    ctx.save("native.json", state)
 }
 fn settle(ctx: &mut HookCtx) -> Result<bool> {
     let _lock = ctx.lock("native")?;
@@ -66,7 +87,7 @@ fn settle(ctx: &mut HookCtx) -> Result<bool> {
         native(s, &pending.payload, pending.ts, &mut events);
         complete_tools(s, &mut events);
         ingest(ctx, id, s, events)?;
-        ctx.save("native.json", &state)?;
+        save_state(ctx, &mut state)?;
         std::fs::remove_file(file)?;
     }
     let mut retry = false;
@@ -78,7 +99,7 @@ fn settle(ctx: &mut HookCtx) -> Result<bool> {
         retry |= (s.turn.is_some() && !s.ended) || !s.steps.is_empty() || !s.done.is_empty();
         ingest(ctx, id, s, events)?;
     }
-    ctx.save("native.json", &state)?;
+    save_state(ctx, &mut state)?;
     Ok(retry)
 }
 fn ingest(ctx: &mut HookCtx, id: &str, s: &Session, events: Vec<Event>) -> Result<()> {

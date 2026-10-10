@@ -31,8 +31,11 @@ fn native(v: &Value) -> bool {
         && (matches!(v["hook_event_name"].as_str(), Some("SessionStart" | "SessionEnd")) || text(v, "turn_id").is_some())
 }
 fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> {
-    let v: Value = serde_json::from_slice(stdin)?;
+    let mut v: Value = serde_json::from_slice(stdin)?;
     if !native(&v) { return Ok(()); }
+    for field in ["prompt", "tool_input", "tool_response", "last_assistant_message"] {
+        if let Some(value) = v.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); }
+    }
     let session = v["session_id"].as_str().unwrap(); let hash = digest(session);
     let prefix = format!("codex-pending-{hash}-");
     let pending = format!("{prefix}{}-{}.json", ctx.now_ns(), crate::record::random_id()?);
@@ -57,6 +60,7 @@ fn drain(ctx: &mut HookCtx, hash: &str, blocking: bool) -> Result<bool> {
         let result = process(ctx, &mut state, pending);
         ctx.metadata = old_metadata; ctx.run_id = old_run; ctx.proxy_active = old_proxy;
         let pending = result?;
+        for stream in state.streams.values_mut() { stream.scrub_content(ctx)?; }
         ctx.save(&key, &state)?;
         if pending { waiting = true; } else { std::fs::remove_file(file)?; }
     }

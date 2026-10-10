@@ -173,3 +173,32 @@ fn stop_before_every_assistant_row_keeps_settlement_pending() {
     let spans=records(&tmp);assert_eq!(spans.len(),2);let chat=spans.iter().find(|span|span.log_type=="chat").unwrap();assert_eq!(chat.usage.output_tokens,Some(7));
     assert!(!settle_pending(&mut ctx).unwrap());assert_eq!(records(&tmp).len(),2);
 }
+
+#[test]
+fn failed_or_abandoned_response_never_becomes_partial_success_on_next_prompt() {
+    for failed in [false,true] {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let payloads=payloads(&tmp);let path=tmp.path.join("main.jsonl");
+        std::fs::write(&path,"").unwrap();send(&mut ctx,&payloads[0]);
+        let partial=include_str!("fixtures/streamed.jsonl").lines().take(2).collect::<Vec<_>>().join("\n")+"\n";
+        std::fs::write(&path,partial).unwrap();
+        if failed {let mut p=payloads[5].clone();p["hook_event_name"]=json!("StopFailure");send(&mut ctx,&p);settle_now(&mut ctx);}
+        let mut next=payloads[0].clone();next["prompt_id"]=json!("next-prompt");send(&mut ctx,&next);
+        let spans=records(&tmp);let chat=spans.iter().find(|s|s.log_type=="chat").unwrap();
+        assert_eq!(chat.status,"error");assert_eq!(chat.usage,Usage::default());
+        let turn=spans.iter().find(|s|s.log_type=="agent").unwrap();assert_eq!(turn.status,"error");
+    }
+}
+#[test]
+fn metadata_only_scrubs_native_queue_and_partial_transcript_state() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.content_cap_bytes=0;let path=tmp.path.join("main.jsonl");
+    std::fs::write(&path,"").unwrap();let mut p=payloads(&tmp).remove(0);
+    for key in ["prompt","tool_input","tool_response","last_assistant_message"] {p[key]=json!("metadata-private-sentinel");}
+    let lock=ctx.try_lock("native").unwrap().unwrap();send(&mut ctx,&p);
+    for file in files(ctx.state_dir(),"native-").unwrap() {assert!(!std::fs::read_to_string(file).unwrap().contains("metadata-private-sentinel"));}
+    drop(lock);settle_pending(&mut ctx).unwrap();
+    let partial=include_str!("fixtures/streamed.jsonl").lines().take(2).collect::<Vec<_>>().join("\n").replace("Hello ","metadata-private-sentinel")+"\n";
+    std::fs::write(&path,partial).unwrap();let stop=payloads(&tmp).remove(5);send(&mut ctx,&stop);
+    let state:Session=ctx.load("session-session-fixture.json").unwrap();
+    for file in state.files.values() {assert!(file.input.is_empty());if let Some(response)=&file.current {assert!(response.input.is_empty());assert!(response.parts.is_empty());}}
+    assert!(!std::fs::read_to_string(ctx.state_dir().join("session-session-fixture.json")).unwrap().contains("metadata-private-sentinel"));
+}

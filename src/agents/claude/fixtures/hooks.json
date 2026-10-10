@@ -1,0 +1,8 @@
+[
+ {"hook_event_name":"UserPromptSubmit","session_id":"session-fixture","prompt_id":"prompt-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","prompt":"Inspect the sample"},
+ {"hook_event_name":"PreToolUse","session_id":"session-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","tool_name":"Agent","tool_use_id":"tool-spawn","tool_input":{"subagent_type":"Explore","prompt":"Inspect delegated sample"}},
+ {"hook_event_name":"SubagentStart","session_id":"session-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","agent_id":"child-fixture","agent_type":"Explore"},
+ {"hook_event_name":"SubagentStop","session_id":"session-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","agent_id":"child-fixture","agent_type":"Explore","agent_transcript_path":"$CHILD","last_assistant_message":"Delegated sample is valid.","stop_hook_active":false},
+ {"hook_event_name":"PostToolUse","session_id":"session-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","tool_name":"Agent","tool_use_id":"tool-spawn","tool_input":{"subagent_type":"Explore","prompt":"Inspect delegated sample"},"tool_response":{"agentId":"child-fixture","status":"completed","content":[{"type":"text","text":"Delegated sample is valid."}]}},
+ {"hook_event_name":"Stop","session_id":"session-fixture","transcript_path":"$TRANSCRIPT","cwd":"/fixture","last_assistant_message":"The sample is valid.","stop_hook_active":false}
+]

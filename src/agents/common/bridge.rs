@@ -12,10 +12,10 @@ pub struct Batch {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag="type",rename_all="snake_case")]
 pub enum Event {
-    TurnStart {turn_id:String,ts_ns:u64,prompt:Option<Value>},
-    Chat {turn_id:String,id:String,parent_id:Option<String>,start_ns:u64,end_ns:u64,model:Option<String>,provider:Option<String>,input:Option<Value>,output:Option<Value>,usage:Option<Usage>,cost_usd:Option<f64>,aux_task:Option<String>,status:Option<String>,error:Option<String>},
-    Tool {turn_id:String,id:String,parent_id:Option<String>,name:Option<String>,start_ns:u64,end_ns:u64,input:Option<Value>,output:Option<Value>,status:Option<String>,error:Option<String>},
-    SubagentStart {turn_id:String,id:String,parent_id:Option<String>,ts_ns:u64,name:Option<String>},
+    TurnStart {turn_id:String,ts_ns:u64,prompt:Option<Value>,#[serde(default)] metadata:BTreeMap<String,Value>},
+    Chat {turn_id:String,id:String,parent_id:Option<String>,start_ns:u64,end_ns:u64,model:Option<String>,provider:Option<String>,input:Option<Value>,output:Option<Value>,usage:Option<Usage>,cost_usd:Option<f64>,aux_task:Option<String>,status:Option<String>,error:Option<String>,#[serde(default)] metadata:BTreeMap<String,Value>},
+    Tool {turn_id:String,id:String,parent_id:Option<String>,name:Option<String>,start_ns:u64,end_ns:u64,input:Option<Value>,output:Option<Value>,status:Option<String>,error:Option<String>,#[serde(default)] metadata:BTreeMap<String,Value>},
+    SubagentStart {turn_id:String,id:String,parent_id:Option<String>,ts_ns:u64,name:Option<String>,#[serde(default)] metadata:BTreeMap<String,Value>},
     SubagentEnd {turn_id:String,id:String,ts_ns:u64,status:Option<String>,output:Option<Value>},
     TurnEnd {turn_id:String,ts_ns:u64,output:Option<Value>,status:Option<String>,error:Option<String>},
 }
@@ -44,11 +44,11 @@ struct Envelope {batch:Batch,metadata:BTreeMap<String,Value>,run_id:Option<Strin
 struct Open {turns:BTreeMap<String,Turn>}
 #[derive(Default,Serialize,Deserialize)]
 struct Turn {
-    session_id:String,metadata:BTreeMap<String,Value>,run_id:Option<String>,start:Option<u64>,explicit_start:bool,end:Option<u64>,latest_end:u64,
+    session_id:String,metadata:BTreeMap<String,Value>,#[serde(default)] root_metadata:BTreeMap<String,Value>,run_id:Option<String>,start:Option<u64>,explicit_start:bool,end:Option<u64>,latest_end:u64,
     prompt:Option<Value>,output:Option<Value>,status:Option<String>,error:Option<String>,emitted:bool,touched:u64,subs:BTreeMap<String,Sub>,
 }
 #[derive(Default,Serialize,Deserialize)]
-struct Sub {start:Option<u64>,end:Option<u64>,parent_id:Option<String>,name:Option<String>,status:Option<String>,output:Option<Value>,emitted:bool}
+struct Sub {#[serde(default)] metadata:BTreeMap<String,Value>,start:Option<u64>,end:Option<u64>,parent_id:Option<String>,name:Option<String>,status:Option<String>,output:Option<Value>,emitted:bool}
 const SEEN_LIMIT:usize=8192;
 struct Seen {order:VecDeque<String>,set:BTreeSet<String>}
 impl Seen {
@@ -97,19 +97,19 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
             });
             turn.touched=now;
             match event {
-                Event::TurnStart {ts_ns,prompt,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;},
+                Event::TurnStart {ts_ns,prompt,metadata,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;turn.root_metadata=metadata;},
                 Event::TurnEnd {ts_ns,output,status,error,..}=>{turn.end=Some(ts_ns);turn.output=output;turn.status=status;turn.error=error;},
-                Event::Chat {id,parent_id,start_ns,end_ns,model,provider,input,output,usage,cost_usd,aux_task,status,error,..}=>{
+                Event::Chat {id,parent_id,start_ns,end_ns,model,provider,input,output,usage,cost_usd,aux_task,status,error,metadata,..}=>{
                     infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{id}"),parent_id.as_deref(),start_ns,end_ns);
                     rec.name=if let Some(model)=&model {format!("{model}.chat")} else {"chat".into()};rec.log_type="chat".into();rec.model=model;rec.provider=provider;rec.input=input;rec.output=output;rec.usage=usage.unwrap_or_default();rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;
                     if let Some(cost)=cost_usd {rec.metadata.insert("estimated_cost_usd".into(),json!(cost));}
-                    if let Some(aux)=aux_task {rec.metadata.insert("hermes.aux_task".into(),json!(aux));}ctx.emit(rec)?;
+                    if let Some(aux)=aux_task {rec.metadata.insert("hermes.aux_task".into(),json!(aux));}rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
-                Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,..}=>{
+                Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,metadata,..}=>{
                     infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{id}"),parent_id.as_deref(),start_ns,end_ns);
-                    rec.name=name.unwrap_or_else(||"tool".into());rec.log_type="tool".into();rec.input=input;rec.output=output;rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;rec.metadata.insert("tool_call_id".into(),json!(id));ctx.emit(rec)?;
+                    rec.name=name.unwrap_or_else(||"tool".into());rec.log_type="tool".into();rec.input=input;rec.output=output;rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;rec.metadata.insert("tool_call_id".into(),json!(id));rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
-                Event::SubagentStart {id,parent_id,ts_ns,name,..}=>{infer_time(turn,ts_ns,ts_ns);let sub=turn.subs.entry(id).or_default();sub.start=Some(ts_ns);sub.parent_id=parent_id;sub.name=name;},
+                Event::SubagentStart {id,parent_id,ts_ns,name,metadata,..}=>{infer_time(turn,ts_ns,ts_ns);let sub=turn.subs.entry(id).or_default();sub.start=Some(ts_ns);sub.parent_id=parent_id;sub.name=name;sub.metadata=metadata;},
                 Event::SubagentEnd {id,ts_ns,status,output,..}=>{turn.latest_end=turn.latest_end.max(ts_ns);let sub=turn.subs.entry(id).or_default();sub.end=Some(ts_ns);sub.status=status;sub.output=output;},
             }
             emit_subs(ctx,&trace,turn)?;
@@ -139,12 +139,13 @@ fn child(turn:&Turn,trace:&str,suffix:&str,parent:Option<&str>,start:u64,end:u64
 }
 fn emit_turn(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     if turn.emitted {return Ok(());}let Some(end)=turn.end else {return Ok(());};let start=turn.start.unwrap_or(end);let end=end.max(turn.latest_end).max(start);
-    ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:turn"),run_id:turn.run_id.clone(),name:format!("{} turn",ctx.agent),start_ns:start,end_ns:end,input:turn.prompt.clone(),output:turn.output.clone(),status:turn.status.clone().unwrap_or_else(||"ok".into()),status_message:turn.error.clone(),thread_id:Some(turn.session_id.clone()),metadata:turn.metadata.clone(),..Default::default()})?;turn.emitted=true;Ok(())
+    let mut metadata=turn.metadata.clone();metadata.extend(turn.root_metadata.clone());
+    ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:turn"),run_id:turn.run_id.clone(),name:format!("{} turn",ctx.agent),start_ns:start,end_ns:end,input:turn.prompt.clone(),output:turn.output.clone(),status:turn.status.clone().unwrap_or_else(||"ok".into()),status_message:turn.error.clone(),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;turn.emitted=true;Ok(())
 }
 fn emit_subs(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     for (id,sub) in &mut turn.subs {
         if sub.emitted {continue;}let (Some(start),Some(end))=(sub.start,sub.end) else {continue;};
-        let mut metadata=turn.metadata.clone();metadata.insert("subagent".into(),json!(true));
+        let mut metadata=turn.metadata.clone();metadata.insert("subagent".into(),json!(true));metadata.extend(sub.metadata.clone());
         ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:sub:{id}"),parent_key:Some(sub.parent_id.as_ref().map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:tool:{id}"))),run_id:turn.run_id.clone(),name:sub.name.clone().unwrap_or_else(||"subagent".into()),start_ns:start,end_ns:end.max(start),output:sub.output.clone(),status:sub.status.clone().unwrap_or_else(||"ok".into()),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;sub.emitted=true;
     }Ok(())
 }
@@ -206,5 +207,28 @@ pub(crate) fn at_flush(paths:&Paths,config:&Config,now:u64)->Result<()> {
         ingest(&mut ctx,batch(json!([{"type":"turn_start","turn_id":"t","ts_ns":1,"prompt":"password=hunter2"},{"type":"turn_end","turn_id":"t","ts_ns":2}]))).unwrap();
         let files=pending(ctx.state_dir()).unwrap();assert_eq!(files.len(),1);assert!(!std::fs::read_to_string(&files[0]).unwrap().contains("hunter2"));assert!(records(&ctx).is_empty());drop(lock);
         let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};at_flush(&paths,&ctx.config,ctx.now_ns()).unwrap();assert_eq!(records(&ctx).len(),1);assert!(pending(ctx.state_dir()).unwrap().is_empty());
+    }
+    #[test] fn per_event_metadata_wins_without_leaking_turn_overrides_to_children() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.metadata=BTreeMap::from([("shared".into(),json!("base")),("base-only".into(),json!(true))]);
+        ingest(&mut ctx,batch(json!([
+            {"type":"turn_start","turn_id":"meta","ts_ns":1,"metadata":{"shared":"turn","turn-only":true}},
+            {"type":"chat","turn_id":"meta","id":"c","start_ns":2,"end_ns":3,"metadata":{"shared":"chat","secret-note":"password=hidden"}},
+            {"type":"tool","turn_id":"meta","id":"spawn","name":"delegate","start_ns":3,"end_ns":7,"metadata":{"shared":"tool"}},
+            {"type":"subagent_start","turn_id":"meta","id":"sub","parent_id":"spawn","ts_ns":4,"metadata":{"shared":"sub"}},
+            {"type":"subagent_end","turn_id":"meta","id":"sub","ts_ns":6},
+            {"type":"turn_end","turn_id":"meta","ts_ns":8}
+        ]))).unwrap();
+        let all=records(&ctx);assert_eq!(all.len(),4);
+        for rec in all {assert_eq!(rec.metadata["base-only"],true);let expected=if rec.span_key.ends_with(":turn") {"turn"} else if rec.log_type=="chat" {"chat"} else if rec.log_type=="tool" {"tool"} else {"sub"};assert_eq!(rec.metadata["shared"],expected);assert_eq!(rec.metadata.contains_key("turn-only"),expected=="turn");assert!(!serde_json::to_string(&rec).unwrap().contains("hidden"));}
+        let parsed=batch(json!([{"type":"turn_start","turn_id":"default","ts_ns":1}]));assert!(matches!(&parsed.events[0],Event::TurnStart {metadata,..} if metadata.is_empty()));
+    }
+    #[test] fn restored_settlement_context_is_snapshotted_per_batch() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+        for (id,proxy) in [("first",true),("second",false)] {
+            ctx.metadata=BTreeMap::from([("restored".into(),json!(id))]);ctx.run_id=Some(format!("run-{id}"));ctx.proxy_active=proxy;
+            ingest(&mut ctx,batch(json!([{ "type":"turn_start","turn_id":id,"ts_ns":1},{"type":"chat","turn_id":id,"id":"c","start_ns":2,"end_ns":3},{"type":"turn_end","turn_id":id,"ts_ns":4}]))).unwrap();
+        }
+        let all=records(&ctx);assert_eq!(all.len(),3);assert!(!all.iter().any(|r|r.trace_key.as_deref()==Some("fake:s:first")&&r.log_type=="chat"));
+        for rec in all {let id=rec.metadata["restored"].as_str().unwrap();assert_eq!(rec.run_id,Some(format!("run-{id}")));}
     }
 }

@@ -28,12 +28,16 @@ pub struct Plan { pub edits: Vec<Edit>, pub notices: Vec<String>, pub offers: Ve
 pub struct Offer { pub id: &'static str, pub prompt: String, pub edits: Vec<Edit> }
 pub enum Edit {
     JsonInsert { file: PathBuf, pointer: String, value: serde_json::Value, id: String },
+    /// Own a scalar/object member only when absent; never replace foreign values.
+    JsonSetIfAbsent { file: PathBuf, pointer: String, value: serde_json::Value, id: String },
     TomlInsert { file: PathBuf, path: Vec<String>, value: toml_edit::Item, id: String },
     WriteFile { path: PathBuf, contents: Vec<u8>, id: String },
     Text { file: PathBuf, id: String, apply: fn(&str) -> Result<String>, revert: fn(&str) -> Result<String> },
+    /// The non-secret argument is persisted so removal uses the original installation context.
+    TextArg { file: PathBuf, id: String, arg: String, apply: fn(&str,&str) -> Result<String>, revert: fn(&str,&str) -> Result<String> },
 }
 impl Edit {
-    fn file_id(&self) -> (&Path, &str) { match self { Self::JsonInsert { file,id,.. } | Self::TomlInsert { file,id,.. } | Self::Text { file,id,.. } => (file,id), Self::WriteFile { path,id,.. } => (path,id) } }
+    fn file_id(&self) -> (&Path, &str) { match self { Self::JsonInsert { file,id,.. } | Self::JsonSetIfAbsent { file,id,.. } | Self::TextArg { file,id,.. } | Self::TomlInsert { file,id,.. } | Self::Text { file,id,.. } => (file,id), Self::WriteFile { path,id,.. } => (path,id) } }
 }
 fn stage(ctx: &SetupCtx, agent: &str, plan: &Plan) -> Result<(files::Files, Owned)> {
     let mut owned = Owned::load(&ctx.state_dir)?; let mut files = files::Files::new();
@@ -56,9 +60,17 @@ fn stage(ctx: &SetupCtx, agent: &str, plan: &Plan) -> Result<(files::Files, Owne
                 let mut root = match &staged.after { Some(b) => serde_json::from_slice(b)?, None => serde_json::json!({}) };
                 let (added, mut created) = json::insert(&mut root, pointer, value)?;
                 if !added { continue; }
-                for entry in &owned.entries { if entry.file == file { if let Change::Json { created: inherited, .. } = &entry.change { created.extend(inherited.iter().cloned()); } } }
+                for entry in &owned.entries { if entry.file == file { if let Change::Json { created: inherited, .. } | Change::JsonSet {created:inherited,..} = &entry.change { created.extend(inherited.iter().cloned()); } } }
                 staged.after = Some(serde_json::to_vec_pretty(&root)?);
                 Change::Json { pointer: pointer.clone(), value: value.clone(), created }
+            }
+            Edit::JsonSetIfAbsent { pointer,value,.. } => {
+                let mut root=match &staged.after {Some(b)=>serde_json::from_slice(b)?,None=>serde_json::json!({})};
+                let (added,mut created)=json::set_if_absent(&mut root,pointer,value)?;
+                if !added {continue;}
+                for entry in &owned.entries {if entry.file==file {match &entry.change {Change::Json {created:inherited,..}|Change::JsonSet {created:inherited,..}=>created.extend(inherited.iter().cloned()),_=>{}}}}
+                staged.after=Some(serde_json::to_vec_pretty(&root)?);
+                Change::JsonSet {pointer:pointer.clone(),value:value.clone(),created}
             }
             Edit::TomlInsert { path, value, .. } => {
                 let mut doc: toml_edit::DocumentMut = std::str::from_utf8(staged.after.as_deref().unwrap_or_default())?.parse()?;
@@ -78,6 +90,12 @@ fn stage(ctx: &SetupCtx, agent: &str, plan: &Plan) -> Result<(files::Files, Owne
                 if before == after { continue; }
                 if !after.contains("herdr-respan") { return Err("text entry lacks ownership marker".into()); }
                 staged.after = Some(after.as_bytes().to_vec()); Change::Text
+            }
+            Edit::TextArg {apply,arg,..} => {
+                let before=std::str::from_utf8(staged.after.as_deref().unwrap_or_default())?;let after=apply(before,arg)?;
+                if before==after {continue;}
+                if !after.contains("herdr-respan") {return Err("text entry lacks ownership marker".into());}
+                staged.after=Some(after.into_bytes());Change::TextArg {arg:arg.clone()}
             }
         };
         owned.entries.push(Entry { agent: agent.into(), id: id.into(), file: file.into(), existed, change });
@@ -104,6 +122,11 @@ pub fn remove(ctx: &SetupCtx, agents: &[String]) -> Result<()> {
                 json::remove(&mut root, pointer, value, created)?;
                 staged.after = if !entry.existed && root.as_object().is_some_and(|o| o.is_empty()) { None } else { Some(serde_json::to_vec_pretty(&root)?) };
             }
+            Change::JsonSet {pointer,value,created} => {
+                let mut root:serde_json::Value=serde_json::from_slice(bytes)?;
+                json::remove_set(&mut root,pointer,value,created)?;
+                staged.after=if !entry.existed&&root.as_object().is_some_and(|o|o.is_empty()) {None} else {Some(serde_json::to_vec_pretty(&root)?)};
+            }
             Change::Toml { path, value, appended, created } => {
                 let mut doc: toml_edit::DocumentMut = std::str::from_utf8(bytes)?.parse()?; toml::remove(&mut doc, path, &toml::decode(value)?, *appended, created)?;
                 staged.after = if !entry.existed && doc.as_table().is_empty() { None } else { Some(doc.to_string().into_bytes()) };
@@ -113,15 +136,23 @@ pub fn remove(ctx: &SetupCtx, agents: &[String]) -> Result<()> {
                 let current = std::str::from_utf8(bytes)?;
                 let spec = crate::agents::find(&entry.agent).ok_or("text adapter no longer available")?;
                 let plan = (spec.plan)(ctx)?;
-                let revert = plan.edits.iter().find_map(|e| match e { Edit::Text { id, revert, .. } if id == &entry.id => Some(revert), _ => None }).ok_or("missing text revert")?;
+                let revert = plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).find_map(|e| match e { Edit::Text { file,id, revert, .. } if id == &entry.id && file==&entry.file => Some(revert), _ => None }).ok_or("missing text revert")?;
                 let reverted = revert(current)?;
                 staged.after = if !entry.existed && reverted.is_empty() { None } else { Some(reverted.into_bytes()) };
+            }
+            Change::TextArg {arg} => {
+                let current=std::str::from_utf8(bytes)?;
+                let spec=crate::agents::find(&entry.agent).ok_or("text adapter no longer available")?;let plan=(spec.plan)(ctx)?;
+                let revert=plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).find_map(|e|match e {Edit::TextArg {file,id,revert,..} if id==&entry.id&&file==&entry.file=>Some(revert),_=>None}).ok_or("missing text-arg revert")?;
+                let reverted=revert(current,arg)?;
+                staged.after=if !entry.existed&&reverted.is_empty() {None} else {Some(reverted.into_bytes())};
             }
         }
     }
     owned.entries.retain(|e| !agents.is_empty() && !agents.contains(&e.agent));
     files::commit(&files, &owned, &ctx.state_dir)
 }
+pub(crate) fn installed_agents(state:&Path)->Result<std::collections::BTreeSet<String>> {Ok(Owned::load(state)?.entries.into_iter().map(|e|e.agent).collect())}
 pub fn installed(state: &Path, agent: &str) -> bool { Owned::load(state).is_ok_and(|o| o.entries.iter().any(|e| e.agent == agent)) }
 pub fn refresh_binary(paths: &Paths) -> Result<()> {
     let current = std::env::current_exe()?; let binary = paths.binary();
@@ -132,11 +163,12 @@ pub fn refresh_binary(paths: &Paths) -> Result<()> {
     let tmp = binary.with_extension("new"); std::fs::copy(current, &tmp)?; std::fs::rename(tmp, binary)?;
     crate::paths::write_private(&version, env!("CARGO_PKG_VERSION").as_bytes())
 }
-pub fn refresh_owned(ctx: &SetupCtx) -> Result<()> {
+pub fn refresh_owned(ctx:&SetupCtx)->Result<()> {refresh_owned_agents(ctx,crate::agents::AGENTS)}
+fn refresh_owned_agents(ctx:&SetupCtx,agents:&[crate::agents::AgentSpec])->Result<()> {
     let owned = Owned::load(&ctx.state_dir)?;
-    for agent in crate::agents::AGENTS {
-        if owned.entries.iter().any(|e| e.agent == agent.kind) {
-            let mut plan = (agent.plan)(ctx)?;
+    for agent in agents {
+        if owned.entries.iter().any(|e|e.agent==agent.kind&&matches!(e.change,Change::File {..})) {
+            let mut plan=match (agent.plan)(ctx) {Ok(plan)=>plan,Err(_)=>{crate::log::error(&ctx.state_dir,"owned asset refresh plan failed; skipping agent");continue;}};
             plan.edits.retain(|e| matches!(e, Edit::WriteFile { path, id, .. } if owned.entries.iter().any(|o| o.agent == agent.kind && &o.file == path && &o.id == id)));
             apply(ctx, agent.kind, &plan)?;
         }
@@ -196,5 +228,37 @@ pub fn refresh_owned(ctx: &SetupCtx) -> Result<()> {
         }
         let cli=crate::cli::parse("setup fake --yes --accept extra --accept other".split_whitespace().map(str::to_string)).unwrap();
         assert!(matches!(cli.command,crate::cli::Command::Setup {accept,yes:true,..} if accept==["extra","other"]));
+    }
+    #[test] fn text_and_textarg_offers_revert_using_original_owned_argument() {
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();
+        let files=[ctx.home.join("fake/base.txt"),ctx.home.join("fake/offer.txt"),ctx.home.join("fake/offerarg.txt")];std::fs::create_dir_all(files[0].parent().unwrap()).unwrap();for file in &files {std::fs::write(file,"foreign\n").unwrap();}
+        let mut plan=(crate::agents::find("fake").unwrap().plan)(&ctx).unwrap();
+        for offer in &mut plan.offers {for edit in &mut offer.edits {if let Edit::TextArg {arg,..}=edit {*arg="original".into();}}}
+        accept_offers(&mut plan,&["text".into(),"textarg".into()],false,|_|Ok(false)).unwrap();apply(&ctx,"fake",&plan).unwrap();apply(&ctx,"fake",&plan).unwrap();
+        let owned=Owned::load(&ctx.state_dir).unwrap();assert!(owned.entries.iter().any(|e|matches!(&e.change,Change::TextArg {arg} if arg=="original")));
+        for file in &files {let mut content=std::fs::read_to_string(file).unwrap();content.push_str("later foreign\n");std::fs::write(file,content).unwrap();}
+        remove(&ctx,&["fake".into()]).unwrap();for file in files {assert_eq!(std::fs::read_to_string(file).unwrap(),"foreign\nlater foreign\n");}
+    }
+    #[test] fn json_set_if_absent_preserves_existing_and_modified_values() {
+        for original in [serde_json::json!({}),serde_json::json!({"version":1}),serde_json::json!({"version":null}),serde_json::json!({"version":2})] {
+            let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();let file=tmp.path.join("settings.json");std::fs::write(&file,original.to_string()).unwrap();
+            let plan=Plan {edits:vec![Edit::JsonSetIfAbsent {file:file.clone(),pointer:"/version".into(),value:serde_json::json!(1),id:"herdr-respan-version".into()}],..Default::default()};
+            apply(&ctx,"fake",&plan).unwrap();apply(&ctx,"fake",&plan).unwrap();let owned=Owned::load(&ctx.state_dir).unwrap();assert_eq!(owned.entries.len(),usize::from(original.get("version").is_none()));
+            remove(&ctx,&["fake".into()]).unwrap();assert_eq!(serde_json::from_slice::<serde_json::Value>(&std::fs::read(&file).unwrap()).unwrap(),original);
+        }
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();let file=tmp.path.join("settings.json");
+        let plan=Plan {edits:vec![Edit::JsonSetIfAbsent {file:file.clone(),pointer:"/nested/enabled".into(),value:serde_json::json!(true),id:"herdr-respan-enabled".into()}],..Default::default()};apply(&ctx,"fake",&plan).unwrap();remove(&ctx,&["fake".into()]).unwrap();assert!(!file.exists());
+        apply(&ctx,"fake",&plan).unwrap();std::fs::write(&file,r#"{"nested":{"enabled":false,"foreign":1}}"#).unwrap();remove(&ctx,&["fake".into()]).unwrap();assert_eq!(serde_json::from_slice::<serde_json::Value>(&std::fs::read(file).unwrap()).unwrap(),serde_json::json!({"nested":{"enabled":false,"foreign":1}}));
+    }
+    #[test] fn refresh_only_plans_owned_assets_and_skips_one_plan_failure() {
+        fn hook(_: &mut crate::record::HookCtx,_:&[u8])->Result<()> {Ok(())}
+        fn broken(_: &SetupCtx)->Result<Plan> {Err("downgraded agent".into())}
+        fn unexpected(_: &SetupCtx)->Result<Plan> {panic!("config-only ownership must not call plan")}
+        fn good(ctx:&SetupCtx)->Result<Plan> {Ok(Plan {edits:vec![Edit::WriteFile {path:ctx.home.join("good.js"),contents:b"new".to_vec(),id:"herdr-respan-good".into()}],..Default::default()})}
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();
+        for kind in ["bad","good"] {apply(&ctx,kind,&Plan {edits:vec![Edit::WriteFile {path:ctx.home.join(format!("{kind}.js")),contents:b"old".to_vec(),id:format!("herdr-respan-{kind}")}],..Default::default()}).unwrap();}
+        apply(&ctx,"config-only",&Plan {edits:vec![Edit::JsonSetIfAbsent {file:ctx.home.join("settings.json"),pointer:"/version".into(),value:serde_json::json!(1),id:"herdr-respan-version".into()}],..Default::default()}).unwrap();
+        let agents=[crate::agents::AgentSpec {kind:"bad",display:"bad",hook,plan:broken,reply:None,settle:None},crate::agents::AgentSpec {kind:"config-only",display:"config-only",hook,plan:unexpected,reply:None,settle:None},crate::agents::AgentSpec {kind:"good",display:"good",hook,plan:good,reply:None,settle:None}];
+        refresh_owned_agents(&ctx,&agents).unwrap();assert_eq!(std::fs::read(ctx.home.join("bad.js")).unwrap(),b"old");assert_eq!(std::fs::read(ctx.home.join("good.js")).unwrap(),b"new");assert!(std::fs::read_to_string(ctx.state_dir.join("herdr-respan.log")).unwrap().contains("owned asset refresh plan failed"));
     }
 }

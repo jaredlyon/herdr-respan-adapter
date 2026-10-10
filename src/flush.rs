@@ -5,12 +5,26 @@ use std::{io::{BufRead, BufReader, Read}, path::Path, time::Duration};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
-pub struct FlushStatus { pub last_flush_ns: u64, pub last_result: String, pub delivered_spans: u64, pub month: String, pub month_spans: u64 }
-pub fn status(state: &Path) -> FlushStatus { std::fs::read(state.join("status.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default() }
+pub struct FlushStatus { pub last_flush_ns: u64, pub last_result: String, pub delivered_spans: u64, pub month: String, pub month_spans: u64, pub spans_sent_month: u64 }
+pub fn status(state: &Path) -> FlushStatus {
+    let mut info:FlushStatus=std::fs::read(state.join("status.json")).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_default();
+    if info.spans_sent_month==0 {info.spans_sent_month=info.month_spans;}
+    info.roll_month(crate::record::now_ns()/1_000_000_000);info
+}
+impl FlushStatus {
+    fn roll_month(&mut self,seconds:u64) {
+        let current=month(seconds);
+        if self.month!=current {self.month=current;self.spans_sent_month=0;self.month_spans=0;}
+    }
+    fn sent(&mut self,count:u64,seconds:u64) {
+        self.roll_month(seconds);self.delivered_spans+=count;self.spans_sent_month+=count;self.month_spans=self.spans_sent_month;
+    }
+}
 pub fn run(paths: &Paths, config: &Config, creds: Option<&Credentials>) -> Result<()> {
     let Some(lock) = crate::spool::Lock::acquire(&paths.state)? else { return Ok(()); };
     let mut info = status(&paths.state);
     let result = (|| {
+        settle_agents(paths,config,crate::agents::AGENTS,&lock,std::thread::sleep)?;
         loop {
             drain(paths, config, creds, &lock, &mut info)?;
             if crate::spool::ready(&paths.state)?.is_empty() {
@@ -26,6 +40,24 @@ pub fn run(paths: &Paths, config: &Config, creds: Option<&Credentials>) -> Resul
     if result.is_ok() && (!crate::spool::ready(&paths.state)?.is_empty() || crate::agents::common::bridge::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
     result
 }
+fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,mut wait:impl FnMut(Duration))->Result<()> {
+    for round in 0..3 {
+        let mut pending=false;
+        for agent in agents {
+            let Some(settle)=agent.settle else {continue;};
+            if !paths.state.join("agents").join(agent.kind).is_dir() {continue;}
+            lock.refresh()?;
+            let mut ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),agent.kind,Default::default(),None,false)?;
+            let marker=ctx.state_dir().join("settle-pending");let before=match std::fs::read(&marker) {Ok(bytes)=>Some(bytes),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(e.into())};
+            let still_pending=settle(&mut ctx)?;pending|=still_pending;ctx.finish()?;
+            if !still_pending&&before.is_some()&&std::fs::read(&marker).ok()==before {
+                match std::fs::remove_file(marker) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}
+            }
+        }
+        if !pending||round==2 {break;}wait(Duration::from_secs(2));
+    }Ok(())
+}
+
 fn drain(paths: &Paths, config: &Config, creds: Option<&Credentials>, lock: &crate::spool::Lock, info: &mut FlushStatus) -> Result<()> {
     crate::agents::common::bridge::at_flush(paths, config, crate::record::now_ns())?;
     let files = crate::spool::ready(&paths.state)?;
@@ -47,15 +79,13 @@ fn drain(paths: &Paths, config: &Config, creds: Option<&Credentials>, lock: &cra
         groups.push((path, start, records.len()));
     }
     crate::otlp::reparent(&mut records);
-    let month = month(crate::record::now_ns() / 1_000_000_000);
-    if info.month != month { info.month = month; info.month_spans = 0; }
     for (path, start, end) in groups {
         let mut offset = start;
         while offset < end {
             lock.refresh()?;
             let next = (offset + 512).min(end);
             post(config, &creds.key, &crate::otlp::payload(&records[offset..next]))?;
-            info.delivered_spans += (next-offset) as u64; info.month_spans += (next-offset) as u64;
+            info.sent((next-offset) as u64,crate::record::now_ns()/1_000_000_000);
             if next < end {
                 let mut rest = Vec::new();
                 for rec in &records[next..end] { serde_json::to_writer(&mut rest, rec)?; rest.push(b'\n'); }
@@ -109,6 +139,37 @@ fn month(seconds: u64) -> String {
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn calendar_month() { assert_eq!(month(0), "1970-01"); assert_eq!(month(1704067200), "2024-01"); }
+    fn unused_hook(_: &mut crate::record::HookCtx,_:&[u8])->Result<()> {Ok(())}
+    fn unused_plan(_: &crate::setup::SetupCtx)->Result<crate::setup::Plan> {Ok(Default::default())}
+    fn settling(ctx:&mut crate::record::HookCtx)->Result<bool> {
+        assert!(ctx.metadata.is_empty());assert!(ctx.run_id.is_none());assert!(!ctx.proxy_active);
+        let count:u64=ctx.load("settle-count")?;let count=count+1;ctx.save("settle-count",&count)?;
+        if count==3 {ctx.emit(SpanRecord {span_key:"settled".into(),..Default::default()})?;}Ok(count<3)
+    }
+    fn never_ready(ctx:&mut crate::record::HookCtx)->Result<bool> {let count:u64=ctx.load("settle-count")?;ctx.save("settle-count",&(count+1))?;Ok(true)}
+    fn settle_error(_: &mut crate::record::HookCtx)->Result<bool> {Err("settle error".into())}
+    fn spec(kind:&'static str,settle:fn(&mut crate::record::HookCtx)->Result<bool>)->crate::agents::AgentSpec {crate::agents::AgentSpec {kind,display:kind,hook:unused_hook,plan:unused_plan,reply:None,settle:Some(settle)}}
+    #[test] fn settlement_retries_three_rounds_before_sending() {
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let config=Config::default();let agents=[spec("settler",settling),spec("never",never_ready),spec("absent",settle_error)];
+        for kind in ["settler","never"] {let ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),kind,Default::default(),None,false).unwrap();ctx.mark_settle_pending().unwrap();}let lock=crate::spool::Lock::acquire(&paths.state).unwrap().unwrap();let mut waits=Vec::new();
+        settle_agents(&paths,&config,&agents,&lock,|d|waits.push(d)).unwrap();assert_eq!(waits,vec![Duration::from_secs(2),Duration::from_secs(2)]);
+        for kind in ["settler","never"] {let bytes=std::fs::read(paths.state.join("agents").join(kind).join("settle-count")).unwrap();assert_eq!(serde_json::from_slice::<u64>(&bytes).unwrap(),3);}
+        assert!(!paths.state.join("agents/absent").exists());assert!(!paths.state.join("agents/settler/settle-pending").exists());assert!(paths.state.join("agents/never/settle-pending").exists());let ready=crate::spool::ready(&paths.state).unwrap();assert_eq!(ready.len(),1);let rec:SpanRecord=serde_json::from_slice(&std::fs::read(&ready[0]).unwrap()).unwrap();assert_eq!(rec.span_key,"settled");
+        let mut waits=Vec::new();settle_agents(&paths,&config,&[spec("settler",settling)],&lock,|d|waits.push(d)).unwrap();assert!(waits.is_empty());
+        std::fs::create_dir_all(paths.state.join("agents/error")).unwrap();assert!(settle_agents(&paths,&config,&[spec("error",settle_error)],&lock,|_|{}).is_err());
+    }
+    #[test] fn utc_month_rollover_and_successful_send_counter() {
+        let mut status=FlushStatus::default();status.sent(2,1706745599);assert_eq!(status.month,"2024-01");assert_eq!(status.spans_sent_month,2);
+        status.sent(3,1706745600);assert_eq!(status.month,"2024-02");assert_eq!(status.spans_sent_month,3);assert_eq!(status.month_spans,3);assert_eq!(status.delivered_spans,5);
+        status.roll_month(1709251200);assert_eq!(status.month,"2024-03");assert_eq!(status.spans_sent_month,0);assert_eq!(status.month_spans,0);assert_eq!(status.delivered_spans,5);
+    }
+
+    #[test] fn settlement_preserves_newly_queued_marker_generation() {
+        fn new_queue(ctx:&mut crate::record::HookCtx)->Result<bool> {ctx.mark_settle_pending()?;Ok(false)}
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let config=Config::default();let ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),"new-queue",Default::default(),None,false).unwrap();ctx.mark_settle_pending().unwrap();let marker=ctx.state_dir().join("settle-pending");let before=std::fs::read(&marker).unwrap();let lock=crate::spool::Lock::acquire(&paths.state).unwrap().unwrap();
+        settle_agents(&paths,&config,&[spec("new-queue",new_queue)],&lock,|_|{}).unwrap();assert_ne!(std::fs::read(marker).unwrap(),before);
+    }
+
 }
 
 #[cfg(test)] mod delivery_tests {
@@ -157,7 +218,7 @@ fn month(seconds: u64) -> String {
         run(&paths,&config,Some(&key())).unwrap(); let requests=server.join().unwrap();assert_eq!(requests.len(),1);
         let golden:Value=serde_json::from_str(include_str!("setup/otlp-golden.json")).unwrap();assert_eq!(requests[0].1,golden);
         assert!(requests[0].0.starts_with("POST /api/v2/traces HTTP/1.1"));assert!(requests[0].0.to_ascii_lowercase().contains("authorization: bearer mock-key-not-a-provider-credential"));
-        assert!(crate::spool::ready(&paths.state).unwrap().is_empty());assert_eq!(status(&paths.state).last_result,"ok");assert_eq!(status(&paths.state).month_spans,1);
+        assert!(crate::spool::ready(&paths.state).unwrap().is_empty());assert_eq!(status(&paths.state).last_result,"ok");assert_eq!(status(&paths.state).month_spans,1);assert_eq!(status(&paths.state).spans_sent_month,1);
     }
     #[test] fn batching_retry_and_rejection_retention() {
         let tmp=crate::tests::Temp::new();let paths=paths(&tmp);
@@ -171,7 +232,7 @@ fn month(seconds: u64) -> String {
             let (base_url,server)=mock(vec![response]);let config=Config {base_url,..Default::default()};
             let mut writer=crate::spool::Writer::new(&paths.state,u64::MAX).unwrap();writer.append(&SpanRecord {span_key:"retained".into(),..Default::default()}).unwrap();writer.finish().unwrap();
             let file=crate::spool::ready(&paths.state).unwrap()[0].clone();let original=std::fs::read(&file).unwrap();
-            assert!(run(&paths,&config,Some(&key())).is_err());server.join().unwrap();assert_eq!(std::fs::read(&file).unwrap(),original);std::fs::remove_file(file).unwrap();
+            let sent=status(&paths.state).spans_sent_month;assert!(run(&paths,&config,Some(&key())).is_err());server.join().unwrap();assert_eq!(status(&paths.state).spans_sent_month,sent);assert_eq!(std::fs::read(&file).unwrap(),original);std::fs::remove_file(file).unwrap();
         }
     }
     #[test] fn acknowledged_batches_are_not_replayed() {

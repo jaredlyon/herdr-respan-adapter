@@ -10,9 +10,11 @@ pub struct Entry { pub agent: String, pub id: String, pub file: PathBuf, pub exi
 #[serde(tag="kind")]
 pub enum Change {
     Json { pointer: String, value: Value, created: Vec<String> },
+    JsonSet { pointer: String, value: Value, created: Vec<String> },
     Toml { path: Vec<String>, value: String, appended: bool, created: Vec<Vec<String>> },
     File { contents: Vec<u8> },
     Text,
+    TextArg { arg: String },
 }
 impl Owned {
     pub fn load(state: &Path) -> Result<Self> {

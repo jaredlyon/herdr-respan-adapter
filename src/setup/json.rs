@@ -26,6 +26,11 @@ pub fn remove(root: &mut Value, pointer: &str, value: &Value, created: &[String]
     if let Some(array) = root.pointer_mut(pointer).and_then(Value::as_array_mut) {
         if let Some(index) = array.iter().rposition(|v| v == value) { array.remove(index); removed = true; }
     }
+    prune(root,created);
+    Ok(removed)
+}
+
+fn prune(root:&mut Value, created:&[String]) {
     let mut created = created.to_vec(); created.sort_by_key(|s| std::cmp::Reverse(s.len()));
     for pointer in created {
         let Some((parent, key)) = pointer.rsplit_once('/') else { continue; };
@@ -33,5 +38,27 @@ pub fn remove(root: &mut Value, pointer: &str, value: &Value, created: &[String]
             if let Some(map) = root.pointer_mut(parent).and_then(Value::as_object_mut) { map.remove(&key.replace("~1", "/").replace("~0", "~")); }
         }
     }
-    Ok(removed)
+}
+pub fn set_if_absent(root:&mut Value,pointer:&str,value:&Value)->Result<(bool,Vec<String>)> {
+    if root.pointer(pointer).is_some() {return Ok((false,Vec::new()));}
+    let keys=parts(pointer)?;
+    let (last,parents)=keys.split_last().ok_or("JSON set requires a non-root pointer")?;
+    let mut node=root;let mut prefix=String::new();let mut created=Vec::new();
+    for key in parents {
+        prefix.push('/');prefix.push_str(&escape(key));
+        if let Value::Object(map)=node {
+            if !map.contains_key(key) {map.insert(key.clone(),Value::Object(Map::new()));created.push(prefix.clone());}
+            node=map.get_mut(key).ok_or("missing JSON key")?;
+        } else if let Value::Array(array)=node {node=array.get_mut(key.parse::<usize>()?).ok_or("invalid JSON array index")?;}
+        else {return Err("JSON pointer traverses a scalar".into());}
+    }
+    if let Value::Object(map)=node {map.insert(last.clone(),value.clone());}
+    else {return Err("JSON set destination must be an object member".into());}
+    Ok((true,created))
+}
+pub fn remove_set(root:&mut Value,pointer:&str,value:&Value,created:&[String])->Result<bool> {
+    if root.pointer(pointer)!=Some(value) {return Ok(false);}
+    let (parent,key)=pointer.rsplit_once('/').ok_or("JSON set requires a non-root pointer")?;
+    let map=root.pointer_mut(parent).and_then(Value::as_object_mut).ok_or("JSON set destination must be an object member")?;
+    map.remove(&key.replace("~1","/").replace("~0","~"));prune(root,created);Ok(true)
 }

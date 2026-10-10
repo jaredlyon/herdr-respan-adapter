@@ -1,6 +1,7 @@
 //! Launch-local endpoint overrides; no agent config or credential writes.
-//! Off/paused runs bypass proxy configuration entirely. Codex profile files overlay
-//! root endpoints; Qwen uses configured OpenAI upstreams before its Dashscope default.
+//! Off/paused runs bypass proxy configuration entirely and use the same agent executable.
+//! Windows launches resolve PATH/PATHEXT shims before spawning; Unix lookup is unchanged.
+//! Codex profile files overlay root endpoints; Qwen prefers configured OpenAI upstreams.
 use crate::{
     config::Config,
     paths::Paths,
@@ -100,6 +101,9 @@ fn codex_endpoint(home: &std::path::Path, args: &[String]) -> Result<Option<(Str
         .ok_or("custom Codex provider needs base_url for proxy routing")?;
     Ok(Some((key, base.into())))
 }
+fn agent_program(kind: &str) -> &str {
+    if kind == "cursor" { "cursor-agent" } else { kind }
+}
 fn build_launch(
     paths: &Paths,
     config: &Config,
@@ -111,7 +115,7 @@ fn build_launch(
         .first()
         .ok_or("usage: run <agent> [-- args] or run --protocol P -- command")?;
     let mut launch = Launch {
-        command: first.clone(),
+        command: agent_program(first).into(),
         args: args[1..]
             .iter()
             .skip_while(|s| s.as_str() == "--")
@@ -388,8 +392,45 @@ fn ensure(paths: &Paths) -> Result<Info> {
         }
     }
 }
-fn command(launch: &Launch) -> Command {
-    let mut command = Command::new(&launch.command);
+#[cfg(windows)]
+fn resolve_program(
+    program: &str,
+    path: Option<&std::ffi::OsStr>,
+    pathext: Option<&std::ffi::OsStr>,
+) -> Result<std::path::PathBuf> {
+    use std::{ffi::OsString, path::Path};
+    let program_path = Path::new(program);
+    let extensions = pathext.filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+    let directories = if program_path.components().count() > 1 || program_path.is_absolute() {
+        vec![std::path::PathBuf::new()]
+    } else {
+        path.map(std::env::split_paths).into_iter().flatten().collect()
+    };
+    for directory in directories {
+        for extension in std::iter::once("").chain(extensions.split(';').filter(|s| !s.is_empty())) {
+            let mut name = OsString::from(program);
+            name.push(extension);
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Ok(std::path::absolute(candidate)?);
+            }
+        }
+    }
+    Err(format!("program not found: {program}").into())
+}
+fn program_command(program: &str) -> Result<Command> {
+    #[cfg(windows)]
+    let program = resolve_program(
+        program,
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("PATHEXT").as_deref(),
+    )?;
+    Ok(Command::new(program))
+}
+fn command(launch: &Launch) -> Result<Command> {
+    let mut command = program_command(&launch.command)?;
     command
         .args(&launch.args)
         .env_remove("HERDR_RESPAN_PROXY")
@@ -397,7 +438,7 @@ fn command(launch: &Launch) -> Command {
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    command
+    Ok(command)
 }
 fn exit_code(status: std::process::ExitStatus) -> i32 {
     if let Some(code) = status.code() {
@@ -460,15 +501,15 @@ fn direct_command(args: &[String]) -> Result<Command> {
         if args.get(2).map(String::as_str) != Some("--") {
             return Err("generic run needs -- before command".into());
         }
-        (args.get(3).ok_or("missing command")?, &args[4..])
+        (args.get(3).ok_or("missing command")?.as_str(), &args[4..])
     } else {
         if !crate::cli::KINDS.contains(&first.as_str()) {
             return Err("unknown agent".into());
         }
         let offset = 1 + usize::from(args.get(1).map(String::as_str) == Some("--"));
-        (first, &args[offset..])
+        (agent_program(first), &args[offset..])
     };
-    let mut command = Command::new(program);
+    let mut command = program_command(program)?;
     command.args(rest).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
     Ok(command)
 }
@@ -553,7 +594,7 @@ pub fn run(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
         eprintln!("herdr-respan: native exporter unavailable; launching without it");
     }
     launch.env.insert("HERDR_RESPAN_RUN_ID".into(), run);
-    let result = wait(&mut command(&launch));
+    let result = command(&launch).and_then(|mut command| wait(&mut command));
     drop(cleanup);
     std::process::exit(result?);
 }
@@ -815,19 +856,73 @@ mod tests {
     }
     #[test]
     fn direct_launch_preserves_arguments_and_environment_for_every_kind() {
+        #[cfg(windows)]
+        if std::env::var_os("HERDR_RESPAN_RUN_TEST_PATH").is_none() {
+            let temp = crate::tests::Temp::new();
+            for kind in crate::cli::KINDS.iter().copied().chain(["custom"]) {
+                fs::write(temp.path.join(format!("{}.cmd", agent_program(kind))), "@echo off\n").unwrap();
+            }
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "run::tests::direct_launch_preserves_arguments_and_environment_for_every_kind"])
+                .env("PATH", &temp.path).env("PATHEXT", ".CMD")
+                .env("HERDR_RESPAN_RUN_TEST_PATH", &temp.path)
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        let temp = crate::tests::Temp::new();
+        let paths = Paths { state: temp.path.join("state"), config: temp.path.join("config") };
+        let env = BTreeMap::from([
+            ("CODEX_HOME".into(), temp.path.join("codex").to_string_lossy().into_owned()),
+            ("COPILOT_HOME".into(), temp.path.join("copilot").to_string_lossy().into_owned()),
+            ("KIMI_MODEL_NAME".into(), "mock".into()),
+            ("KIMI_MODEL_API_KEY".into(), "synthetic".into()),
+        ]);
+        let expected_program = |kind: &str| {
+            #[cfg(windows)]
+            { std::path::PathBuf::from(std::env::var_os("HERDR_RESPAN_RUN_TEST_PATH").unwrap())
+                .join(format!("{}.CMD", agent_program(kind))).into_os_string() }
+            #[cfg(unix)]
+            { std::ffi::OsString::from(agent_program(kind)) }
+        };
         for kind in crate::cli::KINDS {
             let args = [*kind, "--", "--", "--marker"].map(String::from);
-            let command = direct_command(&args).unwrap();
-            assert_eq!(command.get_program(), *kind);
-            assert_eq!(command.get_args().collect::<Vec<_>>(), vec!["--", "--marker"]);
-            assert_eq!(command.get_envs().count(), 0);
+            let direct = direct_command(&args).unwrap();
+            assert_eq!(direct.get_program(), expected_program(kind));
+            assert_eq!(direct.get_args().collect::<Vec<_>>(), vec!["--", "--marker"]);
+            assert_eq!(direct.get_envs().count(), 0);
+            if *kind != "cursor" {
+                let launch = build_launch(&paths, &Config::default(), &args, "http://127.0.0.1:123/r/run", &env).unwrap();
+                assert_eq!(command(&launch).unwrap().get_program(), direct.get_program(), "{kind}");
+            } else {
+                assert_eq!(agent_program(kind), "cursor-agent");
+            }
         }
         let args = ["--protocol", "openai", "--", "custom", "--", "--marker"].map(String::from);
         let command = direct_command(&args).unwrap();
-        assert_eq!(command.get_program(), "custom");
+        assert_eq!(command.get_program(), expected_program("custom"));
         assert_eq!(command.get_args().collect::<Vec<_>>(), vec!["--", "--marker"]);
         assert!(direct_command(&["unknown".into()]).is_err());
         assert!(direct_command(&["--protocol".into(), "openai".into(), "--".into()]).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_program_resolution_honors_path_and_pathext() {
+        let temp = crate::tests::Temp::new();
+        let stubs = temp.path.join("stubs with spaces");
+        fs::create_dir_all(&stubs).unwrap();
+        for extension in ["cmd", "bat", "exe", "com"] {
+            fs::write(stubs.join(format!("shim.{extension}")), "@echo off\n").unwrap();
+            let pathext = std::ffi::OsString::from(format!(".{extension}"));
+            assert_eq!(resolve_program("shim", Some(stubs.as_os_str()), Some(&pathext)).unwrap(),
+                stubs.join(format!("shim.{extension}")));
+        }
+        let pathext = std::ffi::OsStr::new(".CMD;.EXE;.BAT;.COM");
+        assert_eq!(resolve_program("shim", Some(stubs.as_os_str()), Some(pathext)).unwrap(), stubs.join("shim.CMD"));
+        let explicit = stubs.join("shim.cmd");
+        assert_eq!(resolve_program(explicit.to_str().unwrap(), None, Some(pathext)).unwrap(), explicit);
+        assert!(resolve_program("missing", Some(stubs.as_os_str()), Some(pathext))
+            .unwrap_err().to_string().contains("missing"));
     }
     #[test]
     fn codex_current_profiles_overlay_root_and_override_the_effective_provider() {

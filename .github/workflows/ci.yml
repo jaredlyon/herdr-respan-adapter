@@ -1,0 +1,23 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust stable with Clippy
+        run: rustup toolchain install stable --profile minimal --component clippy
+      - name: Build
+        run: cargo +stable build --locked
+      - name: Test
+        run: cargo +stable test --locked
+      - name: Clippy
+        run: cargo +stable clippy --locked --all-targets -- -D warnings

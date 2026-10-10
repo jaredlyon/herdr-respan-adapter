@@ -1,5 +1,7 @@
 //! OMP's Bun extension sends completed turn batches through the shared assembler.
 mod setup;
+#[cfg(test)]
+mod live_tests;
 use crate::agents::{common::bridge, AgentSpec};
 pub const SPEC: AgentSpec = AgentSpec {
     kind: "omp", display: "omp", hook: bridge::hook, plan: setup::plan, reply: None, settle: None,

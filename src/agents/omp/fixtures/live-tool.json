@@ -1,0 +1,218 @@
+{
+  "v": 1,
+  "agent": "omp",
+  "session_id": "captured-omp-session",
+  "session_path": "/isolated/omp/session.jsonl",
+  "cwd": "/isolated/work",
+  "agent_version": null,
+  "events": [
+    {
+      "type": "turn_start",
+      "ts_ns": 1791597486443000000,
+      "prompt": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "turn_id": "captured-turn-2"
+    },
+    {
+      "type": "chat",
+      "id": "chatcmpl_hra_2",
+      "parent_id": null,
+      "start_ns": 1791597486470000000,
+      "end_ns": 1791597486476000000,
+      "model": "mock-model",
+      "provider": "mock",
+      "input": [
+        {
+          "role": "system",
+          "content": "[SCRUBBED: built-in system prompt]"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say the deterministic mock text."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "RUN_TOOL: execute echo hra-e2e then reply."
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_hra_2",
+              "name": "bash",
+              "arguments": {
+                "command": "echo hra-e2e"
+              },
+              "partialArgs": "{\"command\": \"echo hra-e2e\"}",
+              "streamIndex": 0
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 0,
+        "reasoning_tokens": null
+      },
+      "cost_usd": 0,
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-2"
+    },
+    {
+      "type": "tool",
+      "id": "call_hra_2",
+      "parent_id": null,
+      "name": "bash",
+      "start_ns": 1791597486486000000,
+      "end_ns": 1791597486534000000,
+      "input": {
+        "command": "echo hra-e2e"
+      },
+      "output": {
+        "content": [
+          {
+            "type": "text",
+            "text": "hra-e2e\n\n\nWall time: 0.04 seconds"
+          }
+        ],
+        "details": {
+          "timeoutSeconds": 300,
+          "wallTimeMs": 38.81276100000014
+        }
+      },
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-2"
+    },
+    {
+      "type": "chat",
+      "id": "chatcmpl_hra_3",
+      "parent_id": null,
+      "start_ns": 1791597486561000000,
+      "end_ns": 1791597486562000000,
+      "model": "mock-model",
+      "provider": "mock",
+      "input": [
+        {
+          "role": "system",
+          "content": "[SCRUBBED: built-in system prompt]"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say the deterministic mock text."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "RUN_TOOL: execute echo hra-e2e then reply."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "call_hra_2",
+              "name": "bash",
+              "arguments": {
+                "command": "echo hra-e2e"
+              },
+              "partialArgs": "{\"command\": \"echo hra-e2e\"}",
+              "streamIndex": 0
+            }
+          ]
+        },
+        {
+          "role": "toolResult",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e\n\n\nWall time: 0.04 seconds"
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 0,
+        "reasoning_tokens": null
+      },
+      "cost_usd": 0,
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-2"
+    },
+    {
+      "type": "turn_end",
+      "ts_ns": 1791597486564000000,
+      "output": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        }
+      ],
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-2"
+    }
+  ]
+}

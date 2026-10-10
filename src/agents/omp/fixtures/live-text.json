@@ -1,0 +1,80 @@
+{
+  "v": 1,
+  "agent": "omp",
+  "session_id": "captured-omp-session",
+  "session_path": "/isolated/omp/session.jsonl",
+  "cwd": "/isolated/work",
+  "agent_version": null,
+  "events": [
+    {
+      "type": "turn_start",
+      "ts_ns": 1791597486272000000,
+      "prompt": "Say the deterministic mock text.",
+      "turn_id": "captured-turn-1"
+    },
+    {
+      "type": "chat",
+      "id": "chatcmpl_hra_1",
+      "parent_id": null,
+      "start_ns": 1791597486333000000,
+      "end_ns": 1791597486337000000,
+      "model": "mock-model",
+      "provider": "mock",
+      "input": [
+        {
+          "role": "system",
+          "content": "[SCRUBBED: built-in system prompt]"
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Say the deterministic mock text."
+            }
+          ]
+        }
+      ],
+      "output": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_input_tokens": 3,
+        "cache_creation_input_tokens": 0,
+        "reasoning_tokens": null
+      },
+      "cost_usd": 0,
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-1"
+    },
+    {
+      "type": "turn_end",
+      "ts_ns": 1791597486347000000,
+      "output": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "hra-e2e mock response"
+            }
+          ]
+        }
+      ],
+      "status": "ok",
+      "error": null,
+      "turn_id": "captured-turn-1"
+    }
+  ]
+}

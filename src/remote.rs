@@ -179,4 +179,41 @@ pub fn config(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
         assert_eq!(target(list, "a").unwrap(), "user@host");
         assert!(target(list, "off").is_err()); assert!(target(list, "missing").is_err());
     }
+
+    #[cfg(unix)]
+    #[test] fn push_child() {
+        if std::env::var_os("HERDR_RESPAN_PUSH_TEST").is_none() { return; }
+        let paths = Paths::resolve(None, None).unwrap();
+        push(&paths, &Config::default(), "synthetic").unwrap();
+    }
+    #[cfg(unix)]
+    #[test] fn push_uses_stdin_and_remote_config_dir_without_remote_binary() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = crate::tests::Temp::new();
+        let bin = tmp.path.join("fake-bin"); std::fs::create_dir_all(&bin).unwrap();
+        let herdr = bin.join("herdr"); let ssh = bin.join("ssh");
+        std::fs::write(&herdr, "#!/bin/sh\ncase \"$1 $2\" in\n'machine list') printf '%s\\n' '[{\"id\":\"a\",\"label\":\"synthetic\",\"target\":\"fake-target\",\"enabled\":true}]' ;;\n'plugin config-dir') printf '%s\\n' \"$REMOTE_CONFIG\" ;;\n*) exit 1 ;;\nesac\n").unwrap();
+        std::fs::write(&ssh, "#!/bin/sh\nfor last do :; done\nprintf '%s\\n' \"$last\" >> \"$SSH_ARGS_LOG\"\nexec sh -c \"$last\"\n").unwrap();
+        for file in [&herdr, &ssh] { std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o700)).unwrap(); }
+        let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("source") };
+        private_write(&paths.config.join("config.toml"), b"content_cap_bytes=0\n").unwrap();
+        private_write(&paths.config.join(".env"), b"RESPAN_API_KEY=synthetic-transfer-only\n").unwrap();
+        let remote = tmp.path.join("remote config with 'quotes'"); let log = tmp.path.join("ssh-args");
+        let mut search = vec![bin]; search.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()));
+        let result = Command::new(std::env::current_exe().unwrap()).args(["--exact", "remote::tests::push_child", "--nocapture"])
+            .env("HERDR_RESPAN_PUSH_TEST", "1").env("HERDR_BIN_PATH", herdr).env("PATH", std::env::join_paths(search).unwrap())
+            .env("HERDR_PLUGIN_CONFIG_DIR", &paths.config).env("HERDR_PLUGIN_STATE_DIR", &paths.state)
+            .env("REMOTE_CONFIG", &remote).env("SSH_ARGS_LOG", &log).env("HOME", tmp.path.join("home"))
+            .output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        for file in ["config.toml", ".env"] {
+            assert_eq!(std::fs::read(paths.config.join(file)).unwrap(), std::fs::read(remote.join(file)).unwrap());
+            assert_eq!(std::fs::metadata(remote.join(file)).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let args = std::fs::read_to_string(log).unwrap();
+        assert!(!args.contains("synthetic-transfer-only"));
+        assert!(!args.contains(&encode(b"RESPAN_API_KEY=synthetic-transfer-only\n")));
+        assert!(args.contains("herdr plugin config-dir jaredlyon.respan-adapter"));
+        assert!(!args.contains("herdr-respan config"));
+    }
 }

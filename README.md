@@ -135,16 +135,16 @@ Native adapters no-op outside `HERDR_ENV=1`. To turn tracing off and back on at 
 |---|---|---|
 | This machine (every workspace, pane and `run`) | action **Turn Respan tracing off**, or `herdr-respan off` | **Turn Respan tracing on**, or `herdr-respan on` |
 | One workspace | action **Pause this workspace** (workspace/pane menus), or `herdr-respan pause [--workspace <id>]` | **Resume this workspace**, or `herdr-respan resume [--workspace <id>]` |
-| One pane | `HERDR_RESPAN=off` in that pane | unset it |
+| One pane (native adapters and `run` only) | `HERDR_RESPAN=off` in that pane | unset it |
 
 ```sh
 herdr plugin action invoke jaredlyon.respan-adapter.off
 herdr plugin action invoke jaredlyon.respan-adapter.on
 ```
 
-None of these edit agent configs (`remove` does). While off, nothing new is captured and `run` launches agents directly without the proxy; spans captured before you turned it off are still delivered. Workspace pauses are kept when you switch tracing back on. The status popup shows when tracing is off.
+None of these edit agent configs (`remove` does). Machine off and workspace pauses stop all new capture; per-pane `HERDR_RESPAN=off` stops native adapter and `run` capture. Herdr 0.9.3 runs lifecycle event hooks in the server environment without exposing the pane's environment, so lifecycle-only spans for an opted-out pane still require a workspace pause (or machine off). While tracing is off for `run`, it launches agents directly without the proxy; spans captured before you turned tracing off are still delivered. Workspace pauses are kept when you switch tracing back on. The status popup shows when tracing is off.
 
-**A busy user can exceed Respan Free's 100,000 viewable spans/month.** Model, tool, subagent and auxiliary activity can create many spans per turn. Set `tool_spans=false`, `subagent_spans=false`, `aux_spans=false` to reduce volume; `herdr-respan off`, a workspace pause or `HERDR_RESPAN=off` stops capture entirely. `content_cap_bytes=0` reduces stored content but **does not reduce span count**. Status shows this host's month-to-date successfully sent spans (not an account-wide billing counter), spool depth/drops, last flush, coverage and key source. OTLP ingest does not consume model credits; provider calls made by your agents still incur their usual costs. Consult [Respan pricing](https://respan.ai/pricing) for current plan limits.
+**A busy user can exceed Respan Free's 100,000 viewable spans/month.** Model, tool, subagent and auxiliary activity can create many spans per turn. Set `tool_spans=false`, `subagent_spans=false`, `aux_spans=false` to reduce volume; `herdr-respan off` or a workspace pause stops capture entirely. Per-pane `HERDR_RESPAN=off` stops native adapter and `run` capture, not server-side lifecycle-only spans. `content_cap_bytes=0` reduces stored content but **does not reduce span count**. Status shows this host's month-to-date successfully sent spans (not an account-wide billing counter), spool depth/drops, last flush, coverage and key source. OTLP ingest does not consume model credits; provider calls made by your agents still incur their usual costs. Consult [Respan pricing](https://respan.ai/pricing) for current plan limits.
 
 Spool and operational state stay on the host. Errors-only logging uses `$HERDR_PLUGIN_STATE_DIR/herdr-respan.log` (1 MiB × 2 rotation); `HERDR_RESPAN_LOG=debug` enables debug logging. Keys/content are not intentionally logged. Keep state/config directories private and remove any manually copied export files after use.
 

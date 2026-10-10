@@ -83,6 +83,20 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
     let child = string(payload, "agent_id");
     state.cwd = string(payload, "cwd").or_else(||state.cwd.take());
     state.path = string(payload, "transcript_path").or_else(||state.path.take());
+    // SessionStart resumes large histories without scanning or tracing old responses.
+    if matches!(event,"SessionStart"|"UserPromptSubmit") && child.is_none() && state.turn.is_none() {
+        if let Some(path)=&state.path {
+            if !state.files.contains_key(path) {
+                let mut file=Transcript::default();
+                if let Ok(metadata)=std::fs::metadata(path) {
+                    file.cursor.offset=metadata.len();file.cursor.len_seen=metadata.len();
+                    #[cfg(unix)] {use std::os::unix::fs::MetadataExt;file.cursor.identity=Some(format!("{}:{}",metadata.dev(),metadata.ino()));}
+                    #[cfg(not(unix))] {file.cursor.identity=metadata.created().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_nanos().to_string());}
+                }
+                state.files.insert(path.clone(),file);
+            }
+        }
+    }
     // Flush the preceding turn's delayed rows before opening the next one.
     read_transcripts(state, now, events)?;
     if event == "UserPromptSubmit" && child.is_none() {

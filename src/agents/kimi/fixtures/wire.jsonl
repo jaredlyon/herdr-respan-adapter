@@ -1,0 +1,14 @@
+{"type":"metadata","protocol_version":"1.10"}
+{"timestamp":2.1,"message":{"type":"TurnBegin","payload":{"user_input":"Inspect the synthetic project"}}}
+{"timestamp":2.2,"message":{"type":"StepBegin","payload":{"n":1}}}
+{"timestamp":2.3,"message":{"type":"ContentPart","payload":{"type":"text","text":"Delegating inspection"}}}
+{"timestamp":2.4,"message":{"type":"ToolCall","payload":{"type":"function","id":"spawn-1","function":{"name":"Agent","arguments":"{\"prompt\":\"Inspect files\"}"}}}}
+{"timestamp":2.5,"message":{"type":"StatusUpdate","payload":{"message_id":"root-response","token_usage":{"input_other":11,"output":4,"input_cache_read":5,"input_cache_creation":2}}}}
+{"timestamp":3.0,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"TurnBegin","payload":{"user_input":"Inspect files"}}}}}
+{"timestamp":3.1,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"StepBegin","payload":{"n":1}}}}}
+{"timestamp":3.2,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"ContentPart","payload":{"type":"text","text":"Inspecting files"}}}}}
+{"timestamp":3.3,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"StatusUpdate","payload":{"message_id":"child-response","token_usage":{"input_other":7,"output":3,"input_cache_read":0,"input_cache_creation":0}}}}}}
+{"timestamp":3.4,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"ToolCall","payload":{"type":"function","id":"child-tool","function":{"name":"ReadFile","arguments":"{\"path\":\"README.txt\"}"}}}}}}
+{"timestamp":3.5,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"ToolResult","payload":{"tool_call_id":"child-tool","return_value":{"is_error":false,"output":"synthetic content","message":"","display":[]}}}}}}
+{"timestamp":3.6,"message":{"type":"SubagentEvent","payload":{"parent_tool_call_id":"spawn-1","agent_id":"child-1","subagent_type":"explore","event":{"type":"TurnEnd","payload":{}}}}}
+{"timestamp":4.0,"message":{"type":"TurnEnd","payload":{}}}

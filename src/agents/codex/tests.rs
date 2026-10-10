@@ -193,12 +193,31 @@ fn captured_live_hooks_rollouts_exact_usage_and_replay() {
             assert_eq!(chat.usage.cache_read_input_tokens, Some(3)); assert_eq!(chat.usage.reasoning_tokens, Some(0));
             assert_eq!(chat.metadata.get("codex.usage_source"), Some(&json!("token_usage_record")));
             assert!(usage.iter().any(|v| chat.span_key.ends_with(v["payload"]["response_id"].as_str().unwrap())));
+            if let Some(output)=&chat.output {
+                assert_eq!(output.as_array().unwrap().len(),1);
+                assert_eq!(output[0]["content"][0],json!({"type":"output_text","text":"hra-e2e mock response"}));
+            }
         }
         for tool in tools {
             assert_eq!(tool.parent_key.as_deref(), Some(parent.as_str()));
             assert!(tool.input.as_ref().unwrap().to_string().contains("echo hra-e2e"));
             assert!(tool.output.as_ref().unwrap().to_string().contains("hra-e2e"));
         }
+    }
+}
+
+#[test]
+fn assistant_item_identity_survives_split_reads_and_both_native_orders() {
+    for reversed in [false,true] {
+        let mut lines:Vec<String>=include_str!("fixtures/live-text.jsonl").lines().map(str::to_owned).collect();
+        if reversed {lines.swap(8,9);}
+        let mut stream=Stream::default();let mut chats=Vec::new();
+        for line in lines {
+            chats.extend(stream.parse(&[line],None,0).into_iter().filter(|e|matches!(e,Event::Chat {..})));
+            stream=serde_json::from_value(serde_json::to_value(&stream).unwrap()).unwrap();
+        }
+        assert_eq!(chats.len(),1);
+        assert!(matches!(&chats[0],Event::Chat {output:Some(output),..} if output==&json!([{"role":"assistant","content":[{"type":"output_text","text":"hra-e2e mock response"}]}])));
     }
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{config::Config, paths::Paths, record::SpanRecord, setup::{self as engine, Edit, SetupCtx}};
+use crate::{config::Config, paths::Paths, record::{SpanRecord, Usage}, setup::{self as engine, Edit, SetupCtx}};
 
 fn context(tmp: &crate::tests::Temp) -> HookCtx {
     HookCtx::new(Paths { state: tmp.path.join("state"), config: tmp.path.join("config") }, Config { customer_identifier: "synthetic-host".into(), ..Default::default() }, "copilot", BTreeMap::from([("herdr.pane_id".into(), json!("synthetic-pane"))]), None, false).unwrap()
@@ -155,10 +155,57 @@ fn offer_explicit_accept_without_prompt() {
 }
 
 #[test]
-fn sdk_exporter_lines_match_same_golden() {
-    let events = include_str!("fixtures/otel-sdk.jsonl").lines().flat_map(|line| otel::requests(&serde_json::from_str::<Value>(line).unwrap())).map(|r| r.event("hook-1700000000000000000")).collect();
-    let batch = Batch { v: 1, agent: "copilot".into(), session_id: "synthetic-session".into(), session_path: None, cwd: None, agent_version: None, events };
-    assert_eq!(serde_json::to_value(batch).unwrap(), serde_json::from_str::<Value>(include_str!("fixtures/chat-batch.json")).unwrap());
+fn captured_exporter_lines_preserve_per_request_usage() {
+    let requests = include_str!("fixtures/otel-sdk.jsonl").lines().flat_map(|line| otel::requests(&serde_json::from_str::<Value>(line).unwrap())).collect::<Vec<_>>();
+    assert_eq!(requests.len(), 3); // Aggregated invoke_agent, metric and tool rows are not chats.
+    assert_eq!(requests.iter().map(|r| r.turn.as_str()).collect::<Vec<_>>(), ["0", "0", "1"]);
+    let events = requests.iter().map(|r| serde_json::to_value(r.event("user-prompt")).unwrap()).collect::<Vec<_>>();
+    for event in &events {
+        assert_eq!(event["model"], "gpt-4.1"); assert_eq!(event["provider"], "openai");
+        assert_eq!(event["usage"]["input_tokens"], 11); assert_eq!(event["usage"]["output_tokens"], 7);
+        assert_eq!(event["usage"]["cache_read_input_tokens"], 3);
+        assert!(event["usage"]["cache_creation_input_tokens"].is_null());
+        assert!(event["input"].is_null()); assert!(event["output"].is_null()); assert!(event["cost_usd"].is_null());
+        assert_eq!(event["status"], "ok");
+    }
+    assert_eq!(events[0]["id"], "chatcmpl_hra_4");
+    assert_eq!(events[0]["start_ns"], 1791596998451000000u64);
+    assert_eq!(events[0]["end_ns"], 1791596998471000000u64);
+}
+#[test]
+fn captured_hook_order_opens_one_turn_and_native_chats_replace_fallback() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    for fixture in &fixtures[..9] { apply_hook(&mut ctx, fixture); }
+    std::fs::write(ctx.state_dir().join("otel.jsonl"), include_str!("fixtures/otel-sdk.jsonl")).unwrap();
+    for fixture in &fixtures[9..] { apply_hook(&mut ctx, fixture); }
+    assert!(!settle(&mut ctx).unwrap());
+    let all = records(&ctx); assert_eq!(all.len(), 11);
+    assert_eq!(all.iter().filter(|r| r.log_type == "agent").count(), 4);
+    assert_eq!(all.iter().filter(|r| r.log_type == "chat" && r.usage.input_tokens == Some(11)).count(), 3);
+    assert_eq!(all.iter().filter(|r| r.log_type == "chat" && r.usage == Usage::default()).count(), 2);
+    let tools = all.iter().filter(|r| r.log_type == "tool").collect::<Vec<_>>(); assert_eq!(tools.len(), 2);
+    for tool in tools { assert_eq!(tool.input, Some(json!({"command":"echo hra-e2e"}))); assert!(tool.output.as_ref().unwrap().as_str().unwrap().contains("hra-e2e")); }
+    for fixture in fixtures.iter().filter(|f| f["event"] == "userPromptSubmitted") {
+        let session = fixture["payload"]["sessionId"].as_str().unwrap();
+        let state: State = ctx.load(&state_key(session)).unwrap();
+        assert_eq!(state.turns.len(), 1); assert!(state.turns[0].settled); assert!(state.turns[0].end.is_some());
+        assert_eq!(state.turns[0].start, fixture["payload"]["timestamp"].as_u64().unwrap() * 1_000_000);
+        let tree = all.iter().filter(|r| r.thread_id.as_deref() == Some(session)).collect::<Vec<_>>();
+        let turn = tree.iter().find(|r| r.log_type == "agent").unwrap();
+        assert!(tree.iter().filter(|r| r.log_type != "agent").all(|r| r.parent_key.as_ref() == Some(&turn.span_key)));
+    }
+    for fixture in &fixtures { apply_hook(&mut ctx, fixture); }
+    assert!(!settle(&mut ctx).unwrap()); assert_eq!(records(&ctx).len(), 11);
+}
+#[test]
+fn session_start_before_submission_also_does_not_open_a_turn() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    let fixtures: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    apply_hook(&mut ctx, &fixtures[1]); apply_hook(&mut ctx, &fixtures[0]);
+    apply_hook(&mut ctx, &fixtures[2]); apply_hook(&mut ctx, &fixtures[3]);
+    let state: State = ctx.load(&state_key(fixtures[0]["payload"]["sessionId"].as_str().unwrap())).unwrap();
+    assert_eq!(state.turns.len(), 1); assert!(state.turns[0].settled); assert_eq!(records(&ctx).len(), 2);
 }
 
 #[test]

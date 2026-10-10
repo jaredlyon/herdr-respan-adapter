@@ -1,0 +1,197 @@
+[
+  {
+    "event": "userPromptSubmitted",
+    "payload": {
+      "sessionId": "9fa5c6c1-1220-4f9c-81d6-0d7f1433db08",
+      "timestamp": 1791596995771,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "prompt": "Say the deterministic mock text."
+    }
+  },
+  {
+    "event": "sessionStart",
+    "payload": {
+      "sessionId": "9fa5c6c1-1220-4f9c-81d6-0d7f1433db08",
+      "timestamp": 1791596995838,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "source": "new",
+      "initialPrompt": "Say the deterministic mock text."
+    }
+  },
+  {
+    "event": "agentStop",
+    "payload": {
+      "sessionId": "9fa5c6c1-1220-4f9c-81d6-0d7f1433db08",
+      "timestamp": 1791596995943,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "transcriptPath": "/synthetic/copilot-e2e/session-state/9fa5c6c1-1220-4f9c-81d6-0d7f1433db08/events.jsonl",
+      "stopReason": "end_turn",
+      "stop_hook_active": false
+    }
+  },
+  {
+    "event": "sessionEnd",
+    "payload": {
+      "sessionId": "9fa5c6c1-1220-4f9c-81d6-0d7f1433db08",
+      "timestamp": 1791596995983,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "reason": "complete"
+    }
+  },
+  {
+    "event": "userPromptSubmitted",
+    "payload": {
+      "sessionId": "678d8cc8-21fe-45f3-88c8-d20cd20703c9",
+      "timestamp": 1791596997093,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "prompt": "RUN_TOOL: execute echo hra-e2e then reply."
+    }
+  },
+  {
+    "event": "sessionStart",
+    "payload": {
+      "sessionId": "678d8cc8-21fe-45f3-88c8-d20cd20703c9",
+      "timestamp": 1791596997170,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "source": "new",
+      "initialPrompt": "RUN_TOOL: execute echo hra-e2e then reply."
+    }
+  },
+  {
+    "event": "postToolUse",
+    "payload": {
+      "sessionId": "678d8cc8-21fe-45f3-88c8-d20cd20703c9",
+      "timestamp": 1791596997278,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "toolName": "bash",
+      "toolArgs": {
+        "command": "echo hra-e2e"
+      },
+      "toolResult": {
+        "resultType": "success",
+        "textResultForLlm": "hra-e2e\n<shellId: 0 completed with exit code 0>"
+      }
+    }
+  },
+  {
+    "event": "agentStop",
+    "payload": {
+      "sessionId": "678d8cc8-21fe-45f3-88c8-d20cd20703c9",
+      "timestamp": 1791596997389,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "transcriptPath": "/synthetic/copilot-e2e/session-state/678d8cc8-21fe-45f3-88c8-d20cd20703c9/events.jsonl",
+      "stopReason": "end_turn",
+      "stop_hook_active": false
+    }
+  },
+  {
+    "event": "sessionEnd",
+    "payload": {
+      "sessionId": "678d8cc8-21fe-45f3-88c8-d20cd20703c9",
+      "timestamp": 1791596997417,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "reason": "complete"
+    }
+  },
+  {
+    "event": "userPromptSubmitted",
+    "payload": {
+      "sessionId": "6ee76552-1d0d-4c98-a8ae-9190c70a7d01",
+      "timestamp": 1791596998330,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "prompt": "Say the deterministic mock text."
+    }
+  },
+  {
+    "event": "sessionStart",
+    "payload": {
+      "sessionId": "6ee76552-1d0d-4c98-a8ae-9190c70a7d01",
+      "timestamp": 1791596998390,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "source": "new",
+      "initialPrompt": "Say the deterministic mock text.",
+      "traceparent": "00-72a14559a6414065255cbc6664812c14-f715c60ba31fb4d7-01"
+    }
+  },
+  {
+    "event": "agentStop",
+    "payload": {
+      "sessionId": "6ee76552-1d0d-4c98-a8ae-9190c70a7d01",
+      "timestamp": 1791596998484,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "transcriptPath": "/synthetic/copilot-e2e/session-state/6ee76552-1d0d-4c98-a8ae-9190c70a7d01/events.jsonl",
+      "stopReason": "end_turn",
+      "stop_hook_active": false,
+      "traceparent": "00-72a14559a6414065255cbc6664812c14-f715c60ba31fb4d7-01"
+    }
+  },
+  {
+    "event": "sessionEnd",
+    "payload": {
+      "sessionId": "6ee76552-1d0d-4c98-a8ae-9190c70a7d01",
+      "timestamp": 1791596998523,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "reason": "complete",
+      "traceparent": "00-72a14559a6414065255cbc6664812c14-f715c60ba31fb4d7-01"
+    }
+  },
+  {
+    "event": "userPromptSubmitted",
+    "payload": {
+      "sessionId": "0c1b14d2-68e9-4818-918d-904cedcf96e6",
+      "timestamp": 1791596999294,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "prompt": "RUN_TOOL: execute echo hra-e2e then reply."
+    }
+  },
+  {
+    "event": "sessionStart",
+    "payload": {
+      "sessionId": "0c1b14d2-68e9-4818-918d-904cedcf96e6",
+      "timestamp": 1791596999361,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "source": "new",
+      "initialPrompt": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "traceparent": "00-f8adcf3aab74af2c6c77b6139cfe54be-787edf4606477989-01"
+    }
+  },
+  {
+    "event": "postToolUse",
+    "payload": {
+      "sessionId": "0c1b14d2-68e9-4818-918d-904cedcf96e6",
+      "timestamp": 1791596999580,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "toolName": "bash",
+      "toolArgs": {
+        "command": "echo hra-e2e"
+      },
+      "toolResult": {
+        "resultType": "success",
+        "textResultForLlm": "hra-e2e\n<shellId: 0 completed with exit code 0>"
+      },
+      "traceparent": "00-f8adcf3aab74af2c6c77b6139cfe54be-787edf4606477989-01"
+    }
+  },
+  {
+    "event": "agentStop",
+    "payload": {
+      "sessionId": "0c1b14d2-68e9-4818-918d-904cedcf96e6",
+      "timestamp": 1791596999698,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "transcriptPath": "/synthetic/copilot-e2e/session-state/0c1b14d2-68e9-4818-918d-904cedcf96e6/events.jsonl",
+      "stopReason": "end_turn",
+      "stop_hook_active": false,
+      "traceparent": "00-f8adcf3aab74af2c6c77b6139cfe54be-787edf4606477989-01"
+    }
+  },
+  {
+    "event": "sessionEnd",
+    "payload": {
+      "sessionId": "0c1b14d2-68e9-4818-918d-904cedcf96e6",
+      "timestamp": 1791596999725,
+      "cwd": "/synthetic/copilot-e2e/work",
+      "reason": "complete",
+      "traceparent": "00-f8adcf3aab74af2c6c77b6139cfe54be-787edf4606477989-01"
+    }
+  }
+]

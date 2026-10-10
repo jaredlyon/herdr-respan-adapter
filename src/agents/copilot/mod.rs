@@ -104,9 +104,9 @@ fn process(ctx: &mut HookCtx, payload: &Value, configured: Option<&str>, exporte
     let name = event_name(payload, configured).unwrap_or_default();
     let mut events = Vec::new();
     match name {
-        "sessionStart" | "SessionStart" => {
-            if let Some(prompt) = field(payload, "initialPrompt", "initial_prompt") { start_turn(ctx, &mut state, payload, now, Some(prompt.clone()), &mut events)?; }
-        }
+        // SessionStart repeats initialPrompt after UserPromptSubmit in Copilot 1.0.95.
+        // Only prompt submissions open turns, regardless of session-hook ordering.
+        "sessionStart" | "SessionStart" => {}
         "userPromptSubmitted" | "UserPromptSubmit" => start_turn(ctx, &mut state, payload, now, payload.get("prompt").cloned(), &mut events)?,
         "postToolUse" | "PostToolUse" | "postToolUseFailure" | "PostToolUseFailure" => {
             let Some(turn) = state.turns.last().filter(|t| t.end.is_none()) else { return Ok(()); };

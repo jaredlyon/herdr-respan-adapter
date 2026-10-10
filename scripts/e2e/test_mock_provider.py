@@ -54,6 +54,16 @@ class MockProtocols(unittest.TestCase):
                 self.assertEqual(arguments, {'command':'echo hra-e2e','description':'Harmless mock E2E echo'})
                 self.assertEqual(events[-1]['usage']['completion_tokens'], 7)
 
+                grok_shell = {'type':'function','name':'run_terminal_command','parameters':{'properties':{'command':{'type':'string'},'description':{'type':'string'}}}}
+                title = {'type':'function','name':'session_title','parameters':{'properties':{'title':{'type':'string'}}}}
+                content, _ = post('/v1/responses', {'model':'mock-model','input':[{'role':'user','content':'RUN_TOOL'}], 'tools':[grok_shell,title], 'tool_choice':{'type':'function','name':'session_title'}})
+                self.assertEqual(json.loads(content)['output'][0]['type'], 'message')
+                content, _ = post('/v1/responses', {'model':'mock-model','input':[{'role':'user','content':'RUN_TOOL'}], 'tools':[grok_shell]})
+                item = json.loads(content)['output'][0]
+                self.assertEqual(item['name'],'run_terminal_command')
+                self.assertEqual(json.loads(item['arguments']),{'command':'echo hra-e2e','description':'Harmless mock E2E echo'})
+                content, _ = post('/v1/responses', {'model':'mock-model','input':[{'role':'user','content':'RUN_TOOL'}], 'tools':[title]})
+                self.assertEqual(json.loads(content)['output'][0]['type'],'message')
                 content, _ = post('/v1/responses', {'model':'mock-model','stream':True,'generate':False,'input':'hello'})
                 events = [json.loads(line[6:]) for line in content.splitlines() if line.startswith('data: ')]
                 self.assertEqual([e['type'] for e in events], ['response.created','response.completed'])

@@ -40,7 +40,7 @@ This is a deterministic local HTTP harness, not provider emulation or real-netwo
 
 ### Streaming and request-identity evidence
 
-`python3 scripts/e2e/test_mock_provider.py` checks all mock HTTP/SSE families and Responses WebSocket framing against a fresh loopback server. Upgrade `/v1/responses` with WebSocket version 13, then send text JSON `response.create` messages; each request emits the same `response.*` sequence as SSE. `generate=false` emits created/completed with empty output and absent usage. Shell arguments follow the advertised JSON schema (`cmd` versus `command`, array commands, optional descriptions); recognized shells include Codex `exec_command`/`shell_command` as well as Bash/Shell/run_shell_command.
+`python3 scripts/e2e/test_mock_provider.py` checks all mock HTTP/SSE families and Responses WebSocket framing against a fresh loopback server. Upgrade `/v1/responses` with WebSocket version 13, then send text JSON `response.create` messages; each request emits the same `response.*` sequence as SSE. `generate=false` emits created/completed with empty output and absent usage. Shell arguments follow the advertised JSON schema (`cmd` versus `command`, array commands, optional descriptions); recognized shells include Codex `exec_command`/`shell_command` as well as Bash/Shell/run_shell_command/run_terminal_command. Echo calls require an advertised shell and respect forced tool_choice/none; auxiliary session-title requests do not trigger shell calls just because their context includes RUN_TOOL.
 
 Gemini streaming sends split text chunks (or one functionCall chunk), then a terminal usage-only content tail with the same responseId. This exercises agents that deliver multiple AfterModel hooks per response rather than just one.
 

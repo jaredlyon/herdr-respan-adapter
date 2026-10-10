@@ -19,7 +19,11 @@ def scenario(body):
     conversation = body.get("messages", body.get("input", body.get("contents", [])))
     text = json.dumps(conversation)
     tool_result = any(marker in text for marker in ('"tool_result"', '"function_call_output"', '"functionResponse"', '"role": "tool"'))
-    return "RUN_TOOL" in text and not tool_result
+    name = tool_name(body)
+    choice = body.get("tool_choice", "auto")
+    forced = choice.get("name", choice.get("function", {}).get("name")) if isinstance(choice, dict) else None
+    disabled = choice == "none" or (isinstance(choice, dict) and choice.get("type") == "none")
+    return bool(name) and not disabled and (not forced or forced == name) and "RUN_TOOL" in text and not tool_result
 
 
 def responses(body, number):
@@ -241,7 +245,7 @@ def tool_name(body):
     tools = body.get("tools", [])
     names = [t.get("name", t.get("function", {}).get("name", "")) for t in tools]
     names += [f.get("name", "") for t in tools for f in t.get("functionDeclarations", [])]
-    return next((n for n in names if n.lower() in ("bash", "shell", "run_shell_command", "execute", "terminal", "exec_command", "shell_command")), "bash")
+    return next((n for n in names if n.lower() in ("bash", "shell", "run_shell_command", "execute", "terminal", "exec_command", "shell_command", "run_terminal_command")), None)
 
 
 def tool_arguments(body):

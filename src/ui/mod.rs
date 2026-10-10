@@ -20,37 +20,11 @@ fn context_agent() -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(&std::env::var("HERDR_PLUGIN_CONTEXT_JSON").ok()?).ok()?;
     value.get("focused_pane_agent")?.as_str().filter(|a| crate::cli::KINDS.contains(a)).map(str::to_string)
 }
-fn executable(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| {
-        #[cfg(windows)] { ["", ".exe", ".cmd", ".bat"].iter().any(|ext| dir.join(format!("{name}{ext}")).is_file()) }
-        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; dir.join(name).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) }
-    }))
-}
-fn detected(kind: &str, home: &std::path::Path) -> bool {
-    let (bin, env, relative) = match kind {
-        "claude" => ("claude", "CLAUDE_CONFIG_DIR", ".claude"), "codex" => ("codex", "CODEX_HOME", ".codex"),
-        "omp" => ("omp", "PI_CODING_AGENT_DIR", ".omp/agent"), "pi" => ("pi", "PI_CODING_AGENT_DIR", ".pi/agent"),
-        "gemini" => ("gemini", "GEMINI_CLI_HOME", ".gemini"), "opencode" => ("opencode", "OPENCODE_CONFIG_DIR", ".config/opencode"),
-        "cursor" => ("agent", "CURSOR_CONFIG_DIR", ".cursor"), "hermes" => ("hermes", "HERMES_HOME", ".hermes"),
-        "copilot" => ("copilot", "COPILOT_HOME", ".copilot"), "kimi" => ("kimi", "KIMI_SHARE_DIR", ".kimi"),
-        "qwen" => ("qwen", "QWEN_HOME", ".qwen"), "grok" => ("grok", "GROK_HOME", ".grok"), _ => return false,
-    };
-    let override_dir = std::env::var_os(env).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
-    let dir = match (kind, override_dir) {
-        ("gemini", Some(root)) => root.join(".gemini"),
-        (_, Some(dir)) => dir,
-        ("omp", None) => home.join(std::env::var_os("PI_CONFIG_DIR").unwrap_or_else(|| ".omp".into())).join("agent"),
-        ("opencode", None) => std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".config")).join("opencode"),
-        ("hermes", None) if cfg!(windows) && (std::env::var_os("HOME").is_none() || std::env::var_os("HOME") == std::env::var_os("USERPROFILE")) => std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(|| home.join("AppData/Local")).join("hermes"),
-        (_, None) => home.join(relative),
-    };
-    executable(bin) || (kind == "cursor" && executable("cursor-agent")) || dir.is_dir()
-}
 fn choose() -> Result<Vec<String>> {
     let home = crate::paths::home()?;
     println!("Respan adapter setup (no changes until the diff is confirmed):");
-    for kind in crate::cli::KINDS { println!("  {kind:10} {}", if detected(kind, &home) { "detected on PATH/config" } else { "not detected" }); }
-    let answer = line("\nAgents (space separated), 'all', or Enter to cancel: ")?;
+    for kind in crate::cli::KINDS { println!("  {kind:10} {}", if crate::setup::detect::detected(kind, &home) { "detected on PATH/config" } else { "not detected" }); }
+    let answer = line("\nAgents (space separated), 'all' (= every detected agent), or Enter to cancel: ")?;
     let kinds: Vec<String> = answer.split_whitespace().map(str::to_string).collect();
     if kinds == ["all"] { return Ok(vec!["--all".into()]); }
     if kinds.iter().any(|k| !crate::cli::KINDS.contains(&k.as_str())) { return Err("unknown agent selection".into()); }

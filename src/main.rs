@@ -68,9 +68,9 @@ fn dispatch(cli: Cli) -> Result<()> {
             if detach { spool::detach_sender(&paths) } else { flush::run(&paths, &config::Config::load(&paths.config)?, credentials(&paths)?.as_ref()) }
         }
         Command::Setup { agents, all, dry_run, yes, accept, project } => {
-            let selected = select(&agents, all)?;
-            let ctx = setup::SetupCtx::new(&paths, paths::home()?, project)?;
-            let mut plans: Vec<_> = selected.iter().map(|a| (a.plan)(&ctx)).collect::<Result<_>>()?;
+            let home = paths::home()?;
+            let ctx = setup::SetupCtx::new(&paths, home.clone(), project)?;
+            let (selected, mut plans) = plans(&ctx, &home, &agents, all)?;
             for id in &accept { if !plans.iter().any(|p| p.offers.iter().any(|o| o.id == id)) { return Err(format!("unknown setup offer: {id}").into()); } }
             use std::io::IsTerminal;
             for plan in &mut plans {
@@ -134,10 +134,25 @@ fn hook(paths: &Paths, agent: &str, payload: &[u8]) -> Result<()> {
     if !cfg!(test) { spool::spawn_flush(paths)?; }
     result
 }
-fn select(names: &[String], all: bool) -> Result<Vec<&'static agents::AgentSpec>> {
-    if all { if agents::AGENTS.is_empty() { return Err("no adapters built yet".into()); } return Ok(agents::AGENTS.iter().collect()); }
-    if names.is_empty() { return Err("choose agents or --all".into()); }
-    names.iter().map(|n| agents::find(n).ok_or_else(|| format!("adapter not installed: {n}").into())).collect()
+/// `--all` means every agent detected on this machine; an agent whose setup refuses (e.g. missing Kimi Code) is
+/// skipped with its reason. Explicitly named agents are always attempted and any refusal is an error.
+fn plans(ctx: &setup::SetupCtx, home: &std::path::Path, names: &[String], all: bool) -> Result<(Vec<&'static agents::AgentSpec>, Vec<setup::Plan>)> {
+    let candidates: Vec<&'static agents::AgentSpec> = if all {
+        agents::AGENTS.iter().filter(|a| setup::detect::detected(a.kind, home)).collect()
+    } else {
+        if names.is_empty() { return Err("choose agents or --all".into()); }
+        names.iter().map(|n| agents::find(n).ok_or_else(|| format!("adapter not installed: {n}").into())).collect::<Result<_>>()?
+    };
+    let (mut selected, mut plans) = (Vec::new(), Vec::new());
+    for agent in candidates {
+        match (agent.plan)(ctx) {
+            Ok(plan) => { selected.push(agent); plans.push(plan); }
+            Err(e) if all => println!("Skipping {}: {e}", agent.display),
+            Err(e) => return Err(e),
+        }
+    }
+    if selected.is_empty() { return Err(if all { "no supported agents detected on this machine; name agents explicitly to set them up anyway" } else { "nothing to set up" }.into()); }
+    Ok((selected, plans))
 }
 
 #[cfg(test)] mod tests {

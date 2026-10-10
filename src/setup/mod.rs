@@ -3,6 +3,7 @@ pub mod toml;
 mod files;
 mod owned;
 mod diff;
+pub mod detect;
 use crate::{paths::Paths, Result};
 use owned::{Change, Entry, Owned};
 use std::path::{Path, PathBuf};

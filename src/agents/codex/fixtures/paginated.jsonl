@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-09T00:00:00.000Z","type":"session_meta","payload":{"id":"root","model_provider":"openai"}}
+{"timestamp":"2026-10-09T00:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"page"}}
+{"timestamp":"2026-10-09T00:00:02.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"page","item":{"type":"CommandExecution","id":"paged-call","command":["sh","-c","false"],"cwd":"/synthetic/repo","parsed_cmd":[],"source":"agent","status":"failed","aggregated_output":"synthetic failure","exit_code":1,"duration":{"secs":1,"nanos":0}},"thread_id":"root"}}
+{"timestamp":"2026-10-09T00:00:03.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"page","last_agent_message":"Handled failure"}}

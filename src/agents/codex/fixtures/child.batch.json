@@ -1,0 +1,51 @@
+{
+  "v": 1,
+  "agent": "codex",
+  "session_id": "root",
+  "session_path": null,
+  "cwd": null,
+  "agent_version": "source-fixture",
+  "events": [
+    {
+      "type": "tool",
+      "turn_id": "t1",
+      "id": "child-call",
+      "parent_id": "child",
+      "name": "exec_command",
+      "start_ns": 1791504004000000000,
+      "end_ns": 1791504005000000000,
+      "input": "{\"cmd\":\"pwd\"}",
+      "output": "/synthetic/child",
+      "status": "ok",
+      "error": null,
+      "metadata": {}
+    },
+    {
+      "type": "chat",
+      "turn_id": "t1",
+      "id": "child-response",
+      "parent_id": "child",
+      "start_ns": 1791504003000000000,
+      "end_ns": 1791504006000000000,
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "input": null,
+      "output": null,
+      "usage": {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "reasoning_tokens": 0
+      },
+      "cost_usd": null,
+      "aux_task": null,
+      "status": "ok",
+      "error": null,
+      "metadata": {
+        "codex.usage_source": "token_usage_record",
+        "codex.timing": "rollout-boundaries"
+      }
+    }
+  ]
+}

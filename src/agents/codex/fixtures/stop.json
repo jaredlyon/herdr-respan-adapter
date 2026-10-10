@@ -1,0 +1,11 @@
+{
+  "session_id": "root",
+  "transcript_path": "/synthetic/rollout-root.jsonl",
+  "cwd": "/synthetic/repo",
+  "hook_event_name": "Stop",
+  "model": "gpt-5-mini",
+  "permission_mode": "default",
+  "turn_id": "t1",
+  "stop_hook_active": false,
+  "last_assistant_message": "Listed files"
+}

@@ -224,7 +224,7 @@ fn baseline(state: &mut State) -> Result<()> {
     }
     Ok(())
 }
-fn missing(e: &(dyn std::error::Error + Send + Sync)) -> bool { e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
+fn missing(e: &(dyn std::error::Error + Send + Sync + 'static)) -> bool { e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
 
 fn transcript(state: &mut State, now: u64, proxy: bool, events: &mut Vec<Event>) -> Result<()> {
     let (Some(path), Some(turn)) = (&state.transcript, &state.turn) else { return Ok(()); };

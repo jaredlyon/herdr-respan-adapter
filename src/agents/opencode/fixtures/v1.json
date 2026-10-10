@@ -1,0 +1,13 @@
+[
+  {"type":"message.updated","properties":{"sessionID":"s1","info":{"id":"p1","sessionID":"s1","role":"user","time":{"created":1000},"agent":"build","model":{"providerID":"anthropic","modelID":"claude-haiku-4-5"}}}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1000,"part":{"id":"prompt-text","sessionID":"s1","messageID":"p1","type":"text","text":"List the files"}}},
+  {"type":"message.updated","properties":{"sessionID":"s1","info":{"id":"a1","sessionID":"s1","role":"assistant","parentID":"p1","time":{"created":1020},"modelID":"claude-haiku-4-5","providerID":"anthropic","mode":"build","agent":"build","path":{"cwd":"/repo","root":"/repo"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}},
+  {"type":"message.part.delta","properties":{"sessionID":"s1","messageID":"a1","partID":"text1","field":"text","delta":"partial"}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1030,"part":{"id":"tool1","sessionID":"s1","messageID":"a1","type":"tool","callID":"call1","tool":"bash","state":{"status":"running","input":{"command":"pwd"},"time":{"start":1030}}}}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1040,"part":{"id":"tool1","sessionID":"s1","messageID":"a1","type":"tool","callID":"call1","tool":"bash","state":{"status":"completed","input":{"command":"pwd"},"output":"/repo","title":"pwd","metadata":{},"time":{"start":1030,"end":1040}}}}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1050,"part":{"id":"text1","sessionID":"s1","messageID":"a1","type":"text","text":"The directory is /repo","time":{"start":1040,"end":1050}}}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1051,"part":{"id":"text1","sessionID":"s1","messageID":"a1","type":"text","text":"The directory is /repo","time":{"start":1040,"end":1050}}}},
+  {"type":"message.part.updated","properties":{"sessionID":"s1","time":1100,"part":{"id":"step1","sessionID":"s1","messageID":"a1","type":"step-finish","reason":"stop","cost":0.01,"tokens":{"input":12,"output":5,"reasoning":2,"cache":{"read":3,"write":4}}}}},
+  {"type":"message.updated","properties":{"sessionID":"s1","info":{"id":"a1","sessionID":"s1","role":"assistant","parentID":"p1","time":{"created":1020,"completed":1100},"modelID":"claude-haiku-4-5","providerID":"anthropic","mode":"build","agent":"build","path":{"cwd":"/repo","root":"/repo"},"cost":0.01,"tokens":{"input":12,"output":5,"reasoning":2,"cache":{"read":3,"write":4}},"finish":"stop"}}},
+  {"type":"session.idle","properties":{"sessionID":"s1"}}
+]

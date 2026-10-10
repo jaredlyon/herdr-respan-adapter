@@ -67,7 +67,7 @@ description = "Respan status"
 
 ## Agent coverage
 
-This table describes native adapter mechanisms and intended span sources. Synthetic fixtures are not proof of live provider integration; each adapter README records its precise version limits, fixture provenance and exercised verification. Unknown usage remains unknown, never zero.
+This table describes native adapter mechanisms and span sources. Every agent except Cursor has been run end-to-end as its real CLI inside a herdr pane against local mock providers (`scripts/e2e/run_<agent>.sh`; Cursor's inference is server-side, so it's fixture-tested only). Real provider logins and live Respan ingestion are verified separately; see each adapter README for exact versions and limits. Unknown usage remains unknown, never zero.
 
 | Agent | Mechanism | Native spans / limits |
 |---|---|---|
@@ -80,7 +80,7 @@ This table describes native adapter mechanisms and intended span sources. Synthe
 | [Cursor Agent](src/agents/cursor/README.md) | Version-1 flat command hooks | Turn, chat, tool; optional stop token counters when exposed. Server-side inference cannot be captured with the local proxy. |
 | [Hermes](src/agents/hermes/README.md) | Python plugin on observer hooks, per-turn batch | Turn, per-attempt chat with usage/errors, tool, subagent, auxiliary chat tagged `hermes.aux_task`; only interactive herdr sessions, not Discord/gateway. Older versions may omit auxiliary hooks. |
 | [Copilot](src/agents/copilot/README.md) | Native hooks + optional OTel JSONL exporter tail | Turn/tool/chat from hooks, per-request model/usage from exporter. Setup offers an opt-in herdr-gated shell-profile exporter line; `run copilot` always enables the exporter. |
-| [Kimi](src/agents/kimi/README.md) | MoonshotAI validated `[[hooks]]` + `wire.jsonl` | Turn, chat/step usage and tool where exposed; model unknown unless established. Requires Kimi ≥ 1.28.0; `KIMI_SHARE_DIR` or `~/.kimi`, not `~/.kimi-code`. |
+| [Kimi Code](src/agents/kimi/README.md) | Kimi Code CLI 2.x `[[hooks]]` + `wire.jsonl` | Turn, per-step chat with model and usage, tool. `KIMI_CODE_HOME` or `~/.kimi-code`; the deprecated legacy `kimi-cli` is refused. Subagent correlation not implemented yet. |
 | [Qwen](src/agents/qwen/README.md) | Claude-style settings hooks + transcript JSONL | Turn, transcript chat with available usage, tool; no AfterModel hook. Qwen OAuth has been discontinued upstream. |
 | [Grok](src/agents/grok/README.md) | Grok hook file + transcript | Turn, tool, subagent; no native per-request usage. Use `run grok` for request/model/usage spans through the proxy. |
 | Every other/custom herdr agent | Pane detection/status/exit events | Lifecycle-only agent spans: working → idle/done/blocked/exited, duration and herdr metadata. No prompts, tools or inferred token counts. |
@@ -175,7 +175,7 @@ This is ordered replacement with rollback, **not a reader snapshot**: during a m
 - **Link succeeds but commands fail:** linking validates only the manifest and does not build. Run the appropriate installer; `bin/herdr-respan.exe` must exist, be executable on Unix, and match the host OS/architecture.
 - **Popup does not open:** herdr needs an active workspace/tab/focused pane. Close any existing popup first. Large imports use noncanonical hidden input, avoiding the normal terminal's short line-buffer limit.
 - **Remote push fails:** confirm saved machine enabled/unique, normal `ssh <target>` works, host key is trusted, remote `herdr` is on PATH and config directory writable. Use paste fallback when plain SSH authentication differs from herdr's managed connection.
-- **Kimi confusion:** supported agent is MoonshotAI Kimi ≥ 1.28.0 with `KIMI_SHARE_DIR`/`~/.kimi`; unrelated `~/.kimi-code` targets are not silently reused.
+- **Kimi:** supported is the current Kimi Code CLI 2.x (`KIMI_CODE_HOME` / `~/.kimi-code`). The old MoonshotAI `kimi-cli` is deprecated upstream (current releases only print a pointer to Kimi Code), so setup refuses it.
 
 ## Uninstall
 

@@ -2,7 +2,7 @@
   "resourceSpans": [{
     "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": "herdr-respan"}}]},
     "scopeSpans": [{
-      "scope": {"name": "herdr-respan", "version": "0.1.0"},
+      "scope": {"name": "herdr-respan", "version": "0.1.1"},
       "spans": [{
         "traceId": "0001786200188e62daa66d130019f600",
         "spanId": "0001786200001602",

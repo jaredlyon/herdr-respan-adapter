@@ -9,10 +9,10 @@ Requires herdr **0.9.3+**. Install on **each host running the agents**, not just
 ```sh
 herdr plugin install jaredlyon/herdr-respan-adapter
 # To pin a release:
-herdr plugin install --ref v0.1.0 jaredlyon/herdr-respan-adapter
+herdr plugin install --ref v0.1.1 jaredlyon/herdr-respan-adapter
 ```
 
-The repository is private during development; GitHub installation requires access. For a local checkout (linking does not build):
+For a local checkout (linking does not build):
 
 ```sh
 sh scripts/install.sh

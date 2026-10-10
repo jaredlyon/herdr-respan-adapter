@@ -54,6 +54,7 @@ fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
     if !valid(&payload) { return Ok(()); }
     let ts = ctx.now_ns();
     ctx.save(&format!("native-{ts}-{}.json", crate::record::random_id()?), &Pending { payload, ts, share: Some(crate::paths::absolute(&share_dir()?)?), metadata: ctx.metadata.clone(), run_id: ctx.run_id.clone(), proxy_active: ctx.proxy_active })?;
+    ctx.mark_settle_pending()?;
     Ok(())
 }
 fn settle(ctx: &mut HookCtx) -> Result<bool> {

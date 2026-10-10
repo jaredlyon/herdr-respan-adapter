@@ -263,7 +263,7 @@ fn secure_proxy_dirs(paths: &Paths) -> Result<()> {
     }
     Ok(())
 }
-fn health(paths: &Paths) -> Option<Info> {
+pub(crate) fn health(paths: &Paths) -> Option<Info> {
     let info: Info =
         serde_json::from_slice(&fs::read(paths.state.join("proxy.json")).ok()?).ok()?;
     if !proxy::live(info.pid) || info.version != env!("CARGO_PKG_VERSION") {

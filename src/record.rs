@@ -63,7 +63,7 @@ impl HookCtx {
         else if let Some(value) = field {
             self.redactor.value(value, self.config.content_cap_bytes);
             let text = if let Value::String(s) = value { s.clone() } else { serde_json::to_string(value)? };
-            if text.len() > self.config.content_cap_bytes { *value = Value::String(crate::redact::cap(&text, self.config.content_cap_bytes)); }
+            if text.len() > self.config.content_cap_bytes { *value = Value::String(crate::redact::cap_content(&text,self.config.content_cap_bytes)); }
         }
         Ok(())
     }
@@ -85,5 +85,9 @@ pub fn random_id() -> Result<String> { let mut bytes = [0; 16]; getrandom::getra
         let marker=ctx.state_dir().join("last_span_ns");assert!(!marker.exists());assert!(crate::spool::ready(&paths.state).unwrap().is_empty());
         let before=now_ns();ctx.emit(SpanRecord {span_key:"proxy".into(),log_type:"chat".into(),source:"proxy".into(),..Default::default()}).unwrap();let emitted:u64=serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();assert!(emitted>=before&&emitted<=now_ns());ctx.finish().unwrap();
         let files=crate::spool::ready(&paths.state).unwrap();assert_eq!(files.len(),1);let rec:SpanRecord=serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();assert_eq!(rec.source,"proxy");
+    }
+    #[test] fn scrub_content_tiny_cap_does_not_erase_open_pem_state() {
+        let tmp=crate::tests::Temp::new();let mut ctx=HookCtx::new(Paths {state:tmp.path.join("state"),config:tmp.path.join("config")},Config {content_cap_bytes:1,..Default::default()},"fake",BTreeMap::new(),None,false).unwrap();let mut value=Some(Value::String("-----BEGIN PRIVATE KEY-----secret".into()));ctx.scrub_content(&mut value).unwrap();let marker=value.as_ref().unwrap().as_str().unwrap().to_string();assert!(marker.contains("private-key:open"));value=Some(Value::String(format!("{marker}A")));ctx.scrub_content(&mut value).unwrap();assert!(!value.as_ref().unwrap().as_str().unwrap().ends_with('A'));
+        ctx.config.content_cap_bytes=0;ctx.scrub_content(&mut value).unwrap();assert!(value.is_none());
     }
 }

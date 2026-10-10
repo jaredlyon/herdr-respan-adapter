@@ -20,29 +20,33 @@ impl FlushStatus {
         self.roll_month(seconds);self.delivered_spans+=count;self.spans_sent_month+=count;self.month_spans=self.spans_sent_month;
     }
 }
-pub fn run(paths: &Paths, config: &Config, creds: Option<&Credentials>) -> Result<()> {
+pub fn run(paths:&Paths,config:&Config,creds:Option<&Credentials>)->Result<()> {
+    run_with_agents(paths,config,creds,crate::agents::AGENTS,std::thread::sleep)
+}
+fn run_with_agents(paths:&Paths,config:&Config,creds:Option<&Credentials>,agents:&[crate::agents::AgentSpec],mut wait:impl FnMut(Duration))->Result<()> {
     let Some(lock) = crate::spool::Lock::acquire(&paths.state)? else { return Ok(()); };
     let mut info = status(&paths.state);
     let mut held_files=BTreeSet::new();
     let result = (|| {
-        settle_agents(paths,config,crate::agents::AGENTS,&lock,std::thread::sleep)?;
         loop {
+            let deferred=settle_agents(paths,config,agents,&lock,&mut wait)?;
             held_files=drain(paths,config,creds,&lock,&mut info)?;
             let sendable=crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p));
-            if !sendable {
-                if !crate::agents::common::bridge::has_pending(&paths.state)? {return Ok(());}
-                std::thread::sleep(Duration::from_millis(1));
-            }
+            let bridge_pending=crate::agents::common::bridge::has_pending(&paths.state)?||crate::lifecycle::has_pending(&paths.state)?;
+            let native_pending=crate::spool::has_settle_pending(&paths.state);
+            if !sendable&&!bridge_pending&&!deferred&&!native_pending {return Ok(());}
+            if deferred||native_pending {wait(Duration::from_secs(2));}
+            else if !sendable {wait(Duration::from_millis(1));}
         }
     })();
     info.last_flush_ns = crate::record::now_ns();
     info.last_result = if result.is_ok() { "ok" } else { "failed (records retained)" }.into();
     crate::paths::atomic_json(&paths.state.join("status.json"), &info)?;
     drop(lock);
-    if result.is_ok() && (crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p)) || crate::agents::common::bridge::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
+    if result.is_ok() && (crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p)) || crate::agents::common::bridge::has_pending(&paths.state)? || crate::spool::has_settle_pending(&paths.state) || crate::lifecycle::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
     result
 }
-fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,mut wait:impl FnMut(Duration))->Result<()> {
+fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,mut wait:impl FnMut(Duration))->Result<bool> {
     for round in 0..3 {
         let mut pending=false;
         for agent in agents {
@@ -53,16 +57,18 @@ fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],
             let marker=ctx.state_dir().join("settle-pending");let before=match std::fs::read(&marker) {Ok(bytes)=>Some(bytes),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(e.into())};
             let still_pending=settle(&mut ctx)?;pending|=still_pending;ctx.finish()?;
             if !still_pending&&before.is_some()&&std::fs::read(&marker).ok()==before {
-                match std::fs::remove_file(marker) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}
+                match std::fs::remove_file(&marker) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}
             }
+            pending|=marker.exists();
         }
-        if !pending||round==2 {break;}wait(Duration::from_secs(2));
-    }Ok(())
+        if !pending||round==2 {return Ok(pending);}wait(Duration::from_secs(2));
+    }Ok(false)
 }
 
 fn drain(paths:&Paths,config:&Config,creds:Option<&Credentials>,lock:&crate::spool::Lock,info:&mut FlushStatus)->Result<BTreeSet<PathBuf>> {
     let now=crate::record::now_ns();
     crate::agents::common::bridge::at_flush(paths,config,now)?;
+    crate::lifecycle::at_flush(paths,config)?;
     crate::otlp::gc_turns(&paths.state,now)?;
     let files=crate::spool::ready(&paths.state)?;let mut held_files=BTreeSet::new();
     if files.is_empty() {return Ok(held_files);}
@@ -89,28 +95,42 @@ fn drain(paths:&Paths,config:&Config,creds:Option<&Credentials>,lock:&crate::spo
         while offset<send_end {
             lock.refresh()?;let next=(offset+512).min(send_end);
             let creds=creds.ok_or("no Respan API key configured")?;
-            post(config,&creds.key,&crate::otlp::payload(&records[offset..next]))?;
+            post_with_warning(config,&creds.key,&crate::otlp::payload(&records[offset..next]),||crate::log::debug(&paths.state,"OTLP accepted spans with a warning"))?;
             info.sent((next-offset) as u64,crate::record::now_ns()/1_000_000_000);
-            if next<end {retain_records(&path,&records[next..end])?;}
+            if next<end {retain_records(&paths.state,&path,&records[next..end])?;}
             offset=next;
         }
         if send_end<end {held_files.insert(path);}
-        else {match std::fs::remove_file(path) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}}
+        else {let _cap=cap_guard(&paths.state)?;match std::fs::remove_file(path) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}}
     }
     Ok(held_files)
 }
-fn retain_records(path:&Path,records:&[SpanRecord])->Result<()> {
+fn cap_guard(state:&Path)->Result<std::fs::File> {
+    loop {if let Some(guard)=crate::spool::cap_lock(state)? {return Ok(guard);}std::thread::sleep(Duration::from_millis(1));}
+}
+fn retain_records(state:&Path,path:&Path,records:&[SpanRecord])->Result<()> {
+    let _cap=cap_guard(state)?;
+    if !path.exists() {return Ok(());}
     let mut rest=Vec::new();for record in records {serde_json::to_writer(&mut rest,record)?;rest.push(b'\n');}
     let temporary=path.with_extension("ack");crate::paths::write_private(&temporary,&rest)?;std::fs::rename(temporary,path)?;Ok(())
 }
 
-pub fn post(config: &Config, key: &str, payload: &Value) -> Result<()> {
-    let base = config.base_url.trim_end_matches('/');
-    if !base.starts_with("https://") {
-        let authority = base.strip_prefix("http://").and_then(|s| s.split('/').next()).ok_or("base URL must use HTTPS (HTTP allowed only on loopback)")?;
-        let host = authority.split(':').next().unwrap_or_default();
-        if host != "127.0.0.1" && host != "localhost" { return Err("HTTP allowed only on loopback".into()); }
-    }
+fn validate_base_url(base:&str)->Result<()> {
+    let uri:hyper::Uri=base.parse().map_err(|_|"invalid OTLP base URL")?;
+    let authority=uri.authority().ok_or("OTLP base URL needs a host")?;
+    if authority.as_str().contains('@') {return Err("OTLP URL userinfo is not allowed".into());}
+    let scheme=uri.scheme_str().ok_or("OTLP base URL needs HTTP or HTTPS")?;
+    let host=uri.host().ok_or("OTLP base URL needs a host")?;
+    if scheme.eq_ignore_ascii_case("https") {return Ok(());}
+    let address=host.trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>().ok();
+    if scheme.eq_ignore_ascii_case("http")&&(host.eq_ignore_ascii_case("localhost")||address.is_some_and(|ip|ip.is_loopback())) {return Ok(());}
+    Err("base URL must use HTTPS (HTTP allowed only on loopback)".into())
+}
+pub fn post(config:&Config,key:&str,payload:&Value)->Result<()> {
+    post_with_warning(config,key,payload,||eprintln!("OTLP accepted spans with a warning"))
+}
+fn post_with_warning(config:&Config,key:&str,payload:&Value,mut warning:impl FnMut())->Result<()> {
+    let base=config.base_url.trim_end_matches('/');validate_base_url(base)?;
     let url = if base.ends_with("/api") { format!("{base}/v2/traces") } else { format!("{base}/api/v2/traces") };
     let agent = ureq::AgentBuilder::new().redirects(0).timeout(Duration::from_secs(15)).build();
     let body = serde_json::to_vec(payload)?;
@@ -123,7 +143,8 @@ pub fn post(config: &Config, key: &str, payload: &Value) -> Result<()> {
                     let value: Value = serde_json::from_str(&text)?;
                     if let Some(partial) = value.get("partialSuccess") {
                         let rejected = partial.get("rejectedSpans").map(|v| v.as_u64().unwrap_or_else(|| v.as_str().and_then(|s| s.parse().ok()).unwrap_or(0))).unwrap_or(0);
-                        if rejected > 0 || partial.get("errorMessage").and_then(Value::as_str).is_some_and(|s| !s.is_empty()) { return Err("OTLP partial rejection (records retained)".into()); }
+                        if rejected>0 {return Err("OTLP partial rejection (records retained)".into());}
+                        if partial.get("errorMessage").and_then(Value::as_str).is_some_and(|s|!s.is_empty()) {warning();}
                     }
                 }
                 return Ok(());
@@ -289,5 +310,25 @@ fn month(seconds: u64) -> String {
     #[test] fn mixed_spool_acknowledges_sendable_records_but_retains_held_requests() {
         let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,..Default::default()};register(&paths,"run");let now=crate::record::now_ns();let held=proxy_record("held",now);let regular=SpanRecord {span_key:"regular".into(),..Default::default()};proxy_records(&paths,&[held,regular]);
         run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();assert_eq!(spans(&requests).len(),1);assert_eq!(status(&paths.state).spans_sent_month,1);let ready=crate::spool::ready(&paths.state).unwrap();assert_eq!(ready.len(),1);let retained:SpanRecord=serde_json::from_slice(&std::fs::read(&ready[0]).unwrap()).unwrap();assert_eq!(retained.span_key,"held");
+    }
+    #[test] fn native_work_finishing_after_the_third_settle_pass_still_delivers() {
+        fn noop(_: &mut HookCtx,_:&[u8])->Result<()> {Ok(())}
+        fn plan(_: &crate::setup::SetupCtx)->Result<crate::setup::Plan> {Ok(Default::default())}
+        fn late(ctx:&mut HookCtx)->Result<bool> {
+            let count:u64=ctx.load("late-count")?;ctx.save("late-count",&(count+1))?;
+            if count<3 {return Ok(true);}ctx.emit(SpanRecord {span_key:"late-after-four-seconds".into(),..Default::default()})?;Ok(false)
+        }
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,..Default::default()};let ctx=HookCtx::new(paths.clone(),config.clone(),"late",BTreeMap::new(),None,false).unwrap();ctx.mark_settle_pending().unwrap();let agent=crate::agents::AgentSpec {kind:"late",display:"late",hook:noop,plan,reply:None,settle:Some(late)};let mut waits=Vec::new();
+        run_with_agents(&paths,&config,Some(&key()),&[agent],|delay|waits.push(delay)).unwrap();let requests=server.join().unwrap();assert_eq!(spans(&requests).len(),1);assert_eq!(status(&paths.state).spans_sent_month,1);assert!(!ctx.state_dir().join("settle-pending").exists());assert_eq!(waits,vec![Duration::from_secs(2);3]);assert_eq!(ctx.load::<u64>("late-count").unwrap(),4);
+    }
+    #[test] fn zero_rejection_partial_success_warning_acknowledges_the_batch() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,r#"{"partialSuccess":{"rejectedSpans":"0","errorMessage":"non-fatal warning"}}"#)]);let config=Config {base_url,..Default::default()};proxy_records(&paths,&[SpanRecord {span_key:"accepted".into(),..Default::default()}]);run(&paths,&config,Some(&key())).unwrap();server.join().unwrap();assert!(crate::spool::ready(&paths.state).unwrap().is_empty());assert_eq!(status(&paths.state).spans_sent_month,1);assert_eq!(status(&paths.state).last_result,"ok");
+    }
+    #[test] fn plaintext_url_guard_uses_the_real_authority_and_rejects_userinfo() {
+        for base_url in ["http://localhost:80@127.0.0.1:0","https://username@127.0.0.1:0"] {
+            let error=post(&Config {base_url:base_url.into(),..Default::default()},"mock-key",&serde_json::json!({})).unwrap_err().to_string();assert!(error.contains("userinfo"),"{error}");
+        }
+        for url in ["http://127.0.0.1:1","http://127.0.0.2:1","http://[::1]:1","http://localhost:1","https://collector.example"] {validate_base_url(url).unwrap();}
+        for url in ["http://127.0.0.1.evil:1","http://collector.example","http://[::2]:1","ftp://localhost:1","http://localhost:80@collector.example"] {assert!(validate_base_url(url).is_err(),"{url}");}
     }
 }

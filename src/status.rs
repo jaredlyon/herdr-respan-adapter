@@ -13,7 +13,7 @@ pub fn report(paths: &Paths, credentials: Option<&Credentials>) -> Result<Value>
     let flush=crate::flush::status(&paths.state);
     Ok(json!({"agents":agents,"spool_files":files.len(),"spool_bytes":bytes,"spool_spans":spans,"dropped_files":crate::spool::dropped(&paths.state),
         "month":flush.month,"spans_sent_month":flush.spans_sent_month,"flush":flush,"key_source":credentials.map(|c| c.source).unwrap_or("not configured"),
-        "proxy_active":paths.state.join("proxy.json").exists()}))
+        "proxy_active":crate::run::health(paths).is_some()}))
 }
 
 #[cfg(test)] mod tests {
@@ -27,5 +27,14 @@ pub fn report(paths: &Paths, credentials: Option<&Credentials>) -> Result<Value>
         let mut flush=crate::flush::status(&paths.state);flush.spans_sent_month=7;flush.month_spans=7;crate::paths::atomic_json(&paths.state.join("status.json"),&flush).unwrap();
         let result=report(&paths,None).unwrap();assert_eq!(result["spans_sent_month"],7);let agent=result["agents"].as_array().unwrap().iter().find(|a|a["kind"]==first).unwrap();assert_eq!(agent["installed"],true);assert!(agent["last_span_ns"].as_u64().unwrap()>0);
         crate::setup::remove(&ctx,&[first.into()]).unwrap();let removed=report(&paths,None).unwrap();assert_eq!(removed["agents"].as_array().unwrap().iter().find(|a|a["kind"]==first).unwrap()["installed"],false);
+    }
+    #[test] fn stale_proxy_info_is_not_active_coverage() {
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};crate::paths::atomic_json(&paths.state.join("proxy.json"),&json!({"pid":0,"port":1,"started_ns":1,"version":env!("CARGO_PKG_VERSION")})).unwrap();assert_eq!(report(&paths,None).unwrap()["proxy_active"],false);
+    }
+    #[test] fn matching_live_proxy_health_is_active_coverage() {
+        use std::{io::{Read,Write},net::TcpListener};
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let listener=TcpListener::bind("127.0.0.1:0").unwrap();let port=listener.local_addr().unwrap().port();let pid=std::process::id();crate::paths::atomic_json(&paths.state.join("proxy.json"),&json!({"pid":pid,"port":port,"started_ns":1,"version":env!("CARGO_PKG_VERSION")})).unwrap();
+        let server=std::thread::spawn(move|| {let (mut stream,_)=listener.accept().unwrap();stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();let mut bytes=[0;4096];let count=stream.read(&mut bytes).unwrap();assert!(std::str::from_utf8(&bytes[..count]).unwrap().starts_with("GET /healthz"));let body=json!({"service":"herdr-respan","pid":pid,"version":env!("CARGO_PKG_VERSION")}).to_string();write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();});
+        assert_eq!(report(&paths,None).unwrap()["proxy_active"],true);server.join().unwrap();assert_eq!(report(&paths,None).unwrap()["proxy_active"],false);
     }
 }

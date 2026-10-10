@@ -1,7 +1,7 @@
 use crate::{config::Config, paths::Paths, record::{HookCtx, SpanRecord, Usage}, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::{BTreeMap,BTreeSet,VecDeque}, path::{Path,PathBuf}, io::Write};
+use std::{collections::{BTreeMap,BTreeSet,VecDeque}, path::{Path,PathBuf}};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Batch {
@@ -55,20 +55,12 @@ impl Seen {
     fn load(ctx:&HookCtx)->Result<Self> {let order:VecDeque<String>=ctx.load("seen")?;let set=order.iter().cloned().collect();Ok(Self {order,set})}
     fn add(&mut self,key:String) {if self.set.insert(key.clone()) {self.order.push_back(key);while self.order.len()>SEEN_LIMIT {if let Some(old)=self.order.pop_front() {self.set.remove(&old);}}}}
 }
-struct Lock {path:PathBuf,token:String}
+struct Lock {_lock:crate::spool::Lock}
 impl Lock {
     fn acquire(dir:&Path)->Result<Option<Self>> {
-        let path=dir.join("bridge.lock");
-        let mut options=std::fs::OpenOptions::new();options.write(true).create_new(true);
-        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
-        let mut file=match options.open(&path) {Ok(f)=>f,Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{
-            if !path.metadata()?.modified()?.elapsed().is_ok_and(|d| d.as_secs()>60) {return Ok(None);}
-            let _=std::fs::remove_file(&path);match options.open(&path) {Ok(f)=>f,Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>return Ok(None),Err(e)=>return Err(e.into())}
-        },Err(e)=>return Err(e.into())};
-        let token=crate::record::random_id()?;file.write_all(token.as_bytes())?;Ok(Some(Self {path,token}))
+        Ok(crate::spool::Lock::acquire_at(&dir.join("bridge.lock"),std::time::Duration::from_secs(60))?.map(|lock|Self {_lock:lock}))
     }
 }
-impl Drop for Lock {fn drop(&mut self) {if std::fs::read_to_string(&self.path).ok().as_deref()==Some(&self.token) {let _=std::fs::remove_file(&self.path);}}}
 pub fn hook(ctx:&mut HookCtx,stdin:&[u8])->Result<()> {ingest(ctx,serde_json::from_slice(stdin)?)}
 pub fn ingest(ctx:&mut HookCtx,mut batch:Batch)->Result<()> {
     if batch.v!=1||batch.agent!=ctx.agent||batch.session_id.is_empty() {return Err("invalid bridge batch identity/version".into());}
@@ -123,7 +115,7 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
             if turn.end.is_none()&&turn.start.is_some_and(|s|now.saturating_sub(s)>=ctx.config.turn_timeout_secs.saturating_mul(1_000_000_000)) {
                 turn.end=Some(now);turn.status=Some("error".into());turn.error=Some("turn not closed".into());index_turn(ctx,trace,turn)?;
             }
-            if turn.end.is_some() && (turn.start.is_some() || now.saturating_sub(turn.touched)>=ctx.config.turn_timeout_secs.saturating_mul(1_000_000_000)) {emit_turn(ctx,trace,turn)?;}
+            if turn.end.is_some() && (turn.explicit_start || now.saturating_sub(turn.touched)>=ctx.config.turn_timeout_secs.saturating_mul(1_000_000_000)) {emit_turn(ctx,trace,turn)?;}
             emit_subs(ctx,trace,turn)?;
         }
     }
@@ -233,5 +225,15 @@ pub(crate) fn at_flush(paths:&Paths,config:&Config,now:u64)->Result<()> {
         }
         let all=records(&ctx);assert_eq!(all.len(),3);assert!(!all.iter().any(|r|r.trace_key.as_deref()==Some("fake:s:first")&&r.log_type=="chat"));
         for rec in all {let id=rec.metadata["restored"].as_str().unwrap();assert_eq!(rec.run_id,Some(format!("run-{id}")));}
+    }
+    #[test] fn inferred_start_does_not_finalize_root_before_late_explicit_prompt() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+        ingest(&mut ctx,batch(json!([{"type":"turn_end","turn_id":"late","ts_ns":100,"output":"done"}]))).unwrap();
+        ingest(&mut ctx,batch(json!([{"type":"chat","turn_id":"late","id":"c","start_ns":20,"end_ns":80}]))).unwrap();let now=ctx.now_ns();drain(&mut ctx,true,now).unwrap();assert_eq!(records(&ctx).len(),1);assert_eq!(records(&ctx)[0].log_type,"chat");
+        ingest(&mut ctx,batch(json!([{"type":"turn_start","turn_id":"late","ts_ns":10,"prompt":"original question","metadata":{"explicit":"yes"}}]))).unwrap();let all=records(&ctx);let root=all.iter().find(|r|r.log_type=="agent").unwrap();assert_eq!(root.start_ns,10);assert_eq!(root.input,Some(json!("original question")));assert_eq!(root.metadata["explicit"],"yes");
+    }
+    #[test] fn missing_explicit_start_can_finalize_after_the_reordering_timeout() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.turn_timeout_secs=1;
+        ingest(&mut ctx,batch(json!([{"type":"turn_end","turn_id":"fallback","ts_ns":100},{"type":"chat","turn_id":"fallback","id":"c","start_ns":20,"end_ns":80}]))).unwrap();let open:Open=ctx.load("open.json").unwrap();let touched=open.turns["fake:s:fallback"].touched;drain(&mut ctx,true,touched+1_000_000_000).unwrap();assert_eq!(records(&ctx).len(),2);
     }
 }

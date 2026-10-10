@@ -31,7 +31,7 @@ hra_cleanup() {
 }
 
 hra_start_mocks() {
-    python3 "$HRA_REPO/scripts/e2e/mock_provider.py" --port-file "$HRA_ROOT/provider.port" --log "$HRA_ROOT/provider.jsonl" >"$HRA_ROOT/provider.log" 2>&1 &
+    python3 "$HRA_REPO/scripts/e2e/mock_provider.py" --port-file "$HRA_ROOT/provider.port" --log "$HRA_ROOT/provider.jsonl" --chunk-delay-ms "${HRA_MOCK_CHUNK_DELAY_MS:-0}" >"$HRA_ROOT/provider.log" 2>&1 &
     HRA_MOCK_PIDS+=("$!")
     python3 "$HRA_REPO/scripts/e2e/mock_otlp.py" --port-file "$HRA_ROOT/otlp.port" --output "$HRA_ROOT/otlp" >"$HRA_ROOT/otlp.log" 2>&1 &
     HRA_MOCK_PIDS+=("$!")

@@ -6,6 +6,7 @@ const TUI: &str = "./herdr-respan-tui.js";
 const V2: &str = "./herdr-respan";
 const BEGIN: &str = "/* herdr-respan registration begin */";
 const END: &str = "/* herdr-respan registration end */";
+const PROPERTY_END: &str = "/* herdr-respan property end */";
 const CREATED: &str = "// herdr-respan created config\n";
 
 pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
@@ -89,7 +90,7 @@ fn add_registration(text: &str, key: &str, entry: &str) -> Result<String> {
     if array.is_some_and(|a| a.iter().any(|v| v.as_str() == Some(entry) || v.get("package").and_then(Value::as_str) == Some(entry)
         || v.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some(entry))) { return Ok(text.into()); }
     let mut pos = clean.iter().position(|b| *b == b'{').ok_or("OpenCode object missing")? + 1;
-    let mut snippet = format!("{}:[{}]", serde_json::to_string(key)?, serde_json::to_string(entry)?);
+    let mut snippet = serde_json::to_string(entry)?;
     let nonempty;
     if let Some(array) = array {
         // Only inspect top-level property names; strings and nested objects may
@@ -121,7 +122,13 @@ fn add_registration(text: &str, key: &str, entry: &str) -> Result<String> {
         nonempty = !array.is_empty();
     } else { nonempty = !value.as_object().expect("validated object").is_empty(); }
     if nonempty { snippet.push(','); }
-    let insert = format!("{BEGIN}{snippet}{END}");
+    let insert = if array.is_some() {
+        format!("{BEGIN}{snippet}{END}")
+    } else {
+        let separator = if nonempty { "," } else { "" };
+        format!("/* herdr-respan created {key} begin */{}:[{BEGIN}{}{END}]{separator}{PROPERTY_END}",
+            serde_json::to_string(key)?, serde_json::to_string(entry)?)
+    };
     let mut output = source.to_string(); output.insert_str(pos, &insert);
     if created { output.insert_str(0, CREATED); }
     jsonc(&output)?;
@@ -129,10 +136,47 @@ fn add_registration(text: &str, key: &str, entry: &str) -> Result<String> {
 }
 
 fn remove_registration(text: &str) -> Result<String> {
-    jsonc(text)?;
+    let (_, clean) = jsonc(text)?;
     let Some(start) = text.find(BEGIN) else { return Ok(text.into()); };
     let end = text[start..].find(END).ok_or("OpenCode registration end marker missing")? + start + END.len();
-    let mut output = text.to_string(); output.replace_range(start..end, "");
+    let entry = text[start + BEGIN.len()..end - END.len()].trim();
+    let owned_comma = entry.ends_with(',');
+    let entry: String = serde_json::from_str(entry.trim_end_matches(','))?;
+    if entry != TUI && entry != V2 { return Err("OpenCode owned registration was modified".into()); }
+    let mut output = text.to_string();
+    // A user may append/prepend foreign elements to a list that we created.
+    // Remove only our element and one adjacent comma, never the list contents.
+    if !owned_comma {
+        let after = clean[end..].iter().position(|b| !b.is_ascii_whitespace()).map(|i| end + i);
+        if let Some(comma) = after.filter(|i| clean[*i] == b',') {
+            output.remove(comma);
+        } else if let Some(comma) = clean[..start].iter().rposition(|b| !b.is_ascii_whitespace()).filter(|i| clean[*i] == b',') {
+            output.remove(comma);
+            output.replace_range(start - 1..end - 1, "");
+            return finish_removal(output);
+        }
+    }
+    output.replace_range(start..end, "");
+    finish_removal(output)
+}
+
+fn finish_removal(mut output: String) -> Result<String> {
+    let (value, _) = jsonc(&output)?;
+    for key in ["plugin", "plugins"] {
+        let marker = format!("/* herdr-respan created {key} begin */");
+        let Some(start) = output.find(&marker) else { continue; };
+        let end = output[start..].find(PROPERTY_END).ok_or("OpenCode property end marker missing")? + start + PROPERTY_END.len();
+        let body = &output[start + marker.len()..end - PROPERTY_END.len()];
+        let (property, _) = jsonc(&format!("{{{body}}}"))?;
+        if value.get(key).and_then(Value::as_array).is_some_and(|a| a.is_empty())
+            && property.as_object().is_some_and(|o| o.len() == 1) {
+            output.replace_range(start..end, "");
+        } else {
+            // Once foreign content exists, the property belongs to the user.
+            output.replace_range(end - PROPERTY_END.len()..end, "");
+            output.replace_range(start..start + marker.len(), "");
+        }
+    }
     let (value, _) = jsonc(&output)?;
     if output.starts_with(CREATED) && value.as_object().is_some_and(|o| o.is_empty()) { return Ok(String::new()); }
     Ok(output)
@@ -156,6 +200,33 @@ mod tests {
         assert!(add_tui("{ /* broken ").is_err());
         let foreign = "{\"plugin\":[{\"package\":\"./herdr-respan-tui.js\"}]}";
         assert_eq!(add_tui(foreign).unwrap(), foreign);
+    }
+
+    #[test]
+    fn remove_preserves_foreign_plugins_appended_to_created_arrays() {
+        let tmp = crate::tests::Temp::new();
+        let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
+        let ctx = SetupCtx::new(&paths, tmp.path.join("home"), Some(tmp.path.join("repo"))).unwrap();
+        let root = ctx.project.as_ref().unwrap().join(".opencode");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("tui.jsonc"), "// user preference\n{\"theme\":\"system\"}\n").unwrap();
+        setup::apply(&ctx, "opencode", &plan(&ctx).unwrap()).unwrap();
+        for file in ["tui.jsonc", "cli.json"] {
+            let installed = std::fs::read_to_string(root.join(file)).unwrap();
+            let edited = installed.replacen(&format!("{END}]"), &format!("{END},\"foreign-plugin\"]"), 1);
+            assert_ne!(installed, edited);
+            std::fs::write(root.join(file), edited).unwrap();
+        }
+        setup::remove(&ctx, &["opencode".into()]).unwrap();
+        for (file, key) in [("tui.jsonc", "plugin"), ("cli.json", "plugins")] {
+            let remaining = std::fs::read_to_string(root.join(file)).unwrap();
+            let (value, _) = jsonc(&remaining).unwrap();
+            assert_eq!(value[key], serde_json::json!(["foreign-plugin"]));
+            assert!(!remaining.contains(BEGIN));
+            assert!(!remaining.contains(PROPERTY_END));
+            if file == "tui.jsonc" { assert_eq!(value["theme"], "system"); assert!(remaining.contains("// user preference")); }
+        }
+        assert!(!root.join("plugins/herdr-respan.js").exists());
     }
 
     #[test]

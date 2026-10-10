@@ -34,7 +34,7 @@ TUI registration is additive and marker-owned:
 - `tui.jsonc` (or existing `tui.json` when no JSONC file exists): append `"./herdr-respan-tui.js"` to singular `plugin`.
 - `cli.json`: append `"./herdr-respan"` to plural `plugins`.
 
-The actual textual insertion precedes existing array elements without modifying/reordering those elements. JSONC comments, strings, trailing commas and herdr entries remain byte-identical. Existing registrations are not adopted as owned entries. Removal deletes only the marker-owned insertion and owned files; modified owned assets are protected by Core's removal checks.
+The actual textual insertion precedes existing array elements without modifying/reordering those elements. JSONC comments, strings, trailing commas and herdr entries remain byte-identical. Existing registrations are not adopted as owned entries. Removal deletes only our marker-owned array element and owned files. A property created by setup is removed only while empty; plugins appended by the user survive uninstall; modified owned assets are protected by Core's removal checks.
 
 Like herdr, setup **defers creating cli.json** when V1 `tui.json` or the OpenCode state directory's `kv.json` would otherwise be migrated on first V2 startup. State directory is `$XDG_STATE_HOME/opencode`, otherwise `~/.local/state/opencode`. The setup notice instructs the user to start V2 once and rerun setup; an existing cli.json is always eligible for additive registration.
 

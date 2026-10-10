@@ -42,10 +42,10 @@ See the [official Grok installation instructions](https://github.com/xai-org/gro
 
 Run in a fresh shell with no inherited provider credentials, profiles, dotenv files, or agent configuration. The probes used an explicitly constructed environment, not the caller's full environment. Preserve herdr's own `HERDR_*` pane variables when adapting these commands into the pane harness; do not preserve ambient API keys or OAuth variables.
 
-First set `REAL_HOME=/home/jlyon`, `AGENT` to the canonical name, and `BASE` to your mock provider's **host root**. For the successor Kimi probe use `AGENT=kimi-successor` but the plugin canonical kind is still `kimi`.
+First set `REAL_HOME=$HOME`, `AGENT` to the canonical name, and `BASE` to your mock provider's **host root**. For the successor Kimi probe use `AGENT=kimi-successor` but the plugin canonical kind is still `kimi`.
 
 ```sh
-REAL_HOME=/home/jlyon
+REAL_HOME=$HOME
 AGENT=claude                         # change per recipe
 BASE=http://127.0.0.1:18080           # actual mock listener port
 ROOT="$REAL_HOME/.hra-e2e/$AGENT"
@@ -232,8 +232,8 @@ Installed separately with the [official installer](https://code.kimi.com/kimi-co
 ```sh
 curl -fsSL https://code.kimi.com/kimi-code/install.sh | \
   env PATH=/usr/bin:/bin \
-  KIMI_INSTALL_DIR=/home/jlyon/.local/share/kimi-code \
-  KIMI_CODE_HOME=/home/jlyon/.hra-e2e/kimi-successor/agent \
+  KIMI_INSTALL_DIR=$HOME/.local/share/kimi-code \
+  KIMI_CODE_HOME=$HOME/.hra-e2e/kimi-successor/agent \
   KIMI_NO_MODIFY_PATH=1 bash
 ```
 
@@ -318,6 +318,6 @@ Observed local POST `/auth/exchange_user_api_key` on port 38261, body `{}`, foll
 
 ## Evidence and scope
 
-Prep artifacts on Spark: `/home/jlyon/.hra-e2e/<agent>/prep-result.json` (observed command, isolated environment, recorded request paths/body prefix, return code, output) and `prep-output.log`. The temporary listener script is not part of the committed harness. No real keys are in these artifacts. All listener ports were ephemeral and listeners/agent process groups were stopped after each check.
+Prep artifacts on Spark: `$HOME/.hra-e2e/<agent>/prep-result.json` (observed command, isolated environment, recorded request paths/body prefix, return code, output) and `prep-output.log`. The temporary listener script is not part of the committed harness. No real keys are in these artifacts. All listener ports were ephemeral and listeners/agent process groups were stopped after each check.
 
 Eleven canonical agents plus both Kimi implementations reached local model requests. Cursor reached only its proprietary authentication endpoint and is explicitly impossible against the specified standard mocks. These checks deliberately do **not** claim successful completions, hooks, tool execution, exact usage, spool/OTLP delivery, herdr metadata, or remove round trips; those are the main E2E harness's acceptance work.

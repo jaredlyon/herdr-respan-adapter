@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+HRA_BIN=${HRA_BIN:-"$(cd "$(dirname "$0")/../.." && pwd)/target/release/herdr-respan"}
 source "$(dirname "$0")/lib.sh"
 hra_init grok
 # The wrapper owns one additional daemon in this run's isolated state directory.
@@ -31,7 +32,7 @@ hooks = {'hooks': {e:[{'hooks':[{'type':'command','command':command}]}] for e in
 (r/'grok/hooks/herdr-respan.json').write_text(json.dumps(hooks))
 (r/'hooks.before.json').write_text(json.dumps(hooks))
 # Only explicit loopback endpoints/dummy credentials enter the agent's environment.
-(r/'launch.py').write_text('import os,sys\n'+f'env={{"PATH":{home!r}+"/.local/bin:/usr/local/bin:/usr/bin:/bin", "HOME":{root!r}+"/home", "GROK_HOME":{root!r}+"/grok", "XDG_CONFIG_HOME":{root!r}+"/xdg/config", "XDG_CACHE_HOME":{root!r}+"/xdg/cache", "XDG_DATA_HOME":{root!r}+"/xdg/data", "XDG_STATE_HOME":{root!r}+"/xdg/state", "XAI_API_KEY":"dummy", "GROK_MODELS_BASE_URL":{base!r}+"/v1", "GROK_XAI_API_BASE_URL":{base!r}+"/v1", "GROK_CLI_CHAT_PROXY_BASE_URL":{base!r}+"/v1", "NO_PROXY":"127.0.0.1,localhost", "LANG":"C.UTF-8", "CI":"1", "DO_NOT_TRACK":"1", "OTEL_SDK_DISABLED":"true"}}\n'+f'env.update({{k:v for k,v in os.environ.items() if k.startswith("HERDR_")}})\ncmd=sys.argv[1:]\nif cmd[0]=={binary!r}:\n for k in ("GROK_MODELS_BASE_URL","GROK_XAI_API_BASE_URL","GROK_CLI_CHAT_PROXY_BASE_URL"): env.pop(k,None)\nos.execvpe(cmd[0],cmd,env)\n')
+(r/'launch.py').write_text('import os,sys\n'+f'env={{"PATH":{home!r}+"/.local/bin:/usr/local/bin:/usr/bin:/bin", "HOME":{root!r}+"/home", "GROK_HOME":{root!r}+"/grok", "XDG_CONFIG_HOME":{root!r}+"/xdg/config", "XDG_CACHE_HOME":{root!r}+"/xdg/cache", "XDG_DATA_HOME":{root!r}+"/xdg/data", "XDG_STATE_HOME":{root!r}+"/xdg/state", "XAI_API_KEY":"dummy", "GROK_MODELS_BASE_URL":{base!r}+"/v1", "GROK_XAI_API_BASE_URL":{base!r}+"/v1", "GROK_CLI_CHAT_PROXY_BASE_URL":{base!r}+"/v1", "NO_PROXY":"127.0.0.1,localhost", "LANG":"C.UTF-8", "CI":"1", "DO_NOT_TRACK":"1", "OTEL_SDK_DISABLED":"true", "GROK_DISABLE_AUTOUPDATER":"1"}}\n'+f'env.update({{k:v for k,v in os.environ.items() if k.startswith("HERDR_")}})\ncmd=sys.argv[1:]\nif cmd[0]=={binary!r}:\n for k in ("GROK_MODELS_BASE_URL","GROK_XAI_API_BASE_URL","GROK_CLI_CHAT_PROXY_BASE_URL"): env.pop(k,None)\nos.execvpe(cmd[0],cmd,env)\n')
 PY
 "$HRA_BIN" setup grok --yes --state-dir "$HRA_ROOT/state" --config-dir "$HRA_ROOT/config" >"$HRA_ROOT/setup.out"
 hra_start_pane "GROK_HOME=$GROK_HOME"

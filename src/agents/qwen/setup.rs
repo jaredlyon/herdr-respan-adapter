@@ -10,7 +10,7 @@ pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
 
 fn plan_at(ctx: &SetupCtx, file: std::path::PathBuf, windows: bool) -> Result<Plan> {
     let command = hookcmd::command(ctx, "qwen", if windows { Shell::PowerShell } else { Shell::Posix });
-    let mut group = claude_style::hook_group(Some("*"), &command, Some(5));
+    let mut group = claude_style::hook_group(Some("*"), &command, Some(5000));
     group["hooks"][0]["env"] = json!({"HERDR_RESPAN_QWEN_HOOK":"1"});
     if windows { group["hooks"][0]["shell"] = json!("powershell"); }
     Ok(Plan {
@@ -57,7 +57,7 @@ mod tests {
         assert_eq!(actual, &file);
         assert_eq!(value["hooks"][0]["shell"], "powershell");
         assert!(value["hooks"][0]["command"].as_str().unwrap().starts_with("& '"));
-        assert_eq!(value["hooks"][0]["timeout"], 5);
+        assert_eq!(value["hooks"][0]["timeout"], 5000);
         assert_eq!(value["hooks"][0]["env"]["HERDR_RESPAN_QWEN_HOOK"], "1");
         assert_eq!(ctx.agent_home("HERDR_RESPAN_UNSET_QWEN_TEST", ".qwen"), ctx.home.join(".qwen"));
     }

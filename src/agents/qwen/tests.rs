@@ -105,3 +105,62 @@ fn timestamps_validate_calendar_and_preserve_fraction() {
     assert_eq!(timestamp_ns("2000-03-01T00:00:00Z"),Some(951_868_800_000_000_000));
     for invalid in ["bad","éééééééééééééééééééé","2025-02-29T00:00:00Z","2026-01-01T25:00:00Z","1970-01-01T00:00:00.Z","1970-01-01T00:00:00+00:00"] {assert_eq!(timestamp_ns(invalid),None);}
 }
+
+#[test]
+fn late_final_record_settles_without_replaying_other_chats() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("transcript.jsonl");
+    std::fs::write(&path,"").unwrap();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    process(&mut ctx,&payload("Stop","1970-01-01T00:00:06.000Z",&path)).unwrap();
+    assert_eq!(records(&ctx).len(),1);
+    std::fs::write(&path,include_str!("fixtures/transcript.jsonl")).unwrap();
+    assert!(settle(&mut ctx).unwrap());
+    assert_eq!(records(&ctx).len(),3);
+    assert!(settle(&mut ctx).unwrap());assert_eq!(records(&ctx).len(),3);
+    let tail_key=key("tail",&path.to_string_lossy());let mut tail:Tail=ctx.load(&tail_key).unwrap();tail.until_ns=0;ctx.save(&tail_key,&tail).unwrap();
+    assert!(!settle(&mut ctx).unwrap());assert!(!ctx.state_dir().join(tail_key).exists());
+}
+
+#[test]
+fn proxy_suppresses_even_usage_only_unknown_model_children() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.proxy_active=true;
+    let path=tmp.path.join("transcript.jsonl");std::fs::write(&path,include_str!("fixtures/transcript.jsonl")).unwrap();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    process(&mut ctx,&payload("Stop","1970-01-01T00:00:06.000Z",&path)).unwrap();
+    let child=tmp.path.join("child.jsonl");std::fs::write(&child,include_str!("fixtures/agent-Explorer-test.jsonl")).unwrap();
+    let mut batch=Batch {v:1,agent:"qwen".into(),session_id:"s".into(),session_path:None,cwd:None,agent_version:None,events:vec![]};
+    transcript(&mut ctx,&child,"s","t1",Some("Explorer-test"),&mut batch).unwrap();
+    assert!(!records(&ctx).iter().any(|r|r.log_type=="chat"));
+}
+
+
+#[test]
+fn child_without_sidecar_stays_under_turn_and_foreign_child_lines_drop() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("root.jsonl");let child=tmp.path.join("agent.jsonl");
+    std::fs::write(&path,"").unwrap();std::fs::write(&child,include_str!("fixtures/agent-Explorer-test.jsonl")).unwrap();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    let mut start=payload("SubagentStart","1970-01-01T00:00:03.000Z",&path);start["agent_id"]=json!("Explorer-test");start["agent_type"]=json!("Explorer");
+    process(&mut ctx,&start).unwrap();
+    let mut end=payload("SubagentStop","1970-01-01T00:00:05.000Z",&path);end["agent_id"]=json!("Explorer-test");end["agent_transcript_path"]=json!(child);
+    process(&mut ctx,&end).unwrap();
+    let all=records(&ctx);assert_eq!(all.len(),2);
+    assert_eq!(all.iter().find(|r|r.span_key.ends_with(":sub:Explorer-test")).unwrap().parent_key.as_deref(),Some("qwen:s:t1:turn"));
+    let wrong=tmp.path.join("wrong.jsonl");std::fs::write(&wrong,include_str!("fixtures/transcript.jsonl")).unwrap();
+    let mut batch=Batch {v:1,agent:"qwen".into(),session_id:"s".into(),session_path:None,cwd:None,agent_version:None,events:vec![]};
+    transcript(&mut ctx,&wrong,"s","t1",Some("Explorer-test"),&mut batch).unwrap();assert_eq!(records(&ctx).len(),2);
+}
+
+
+#[test]
+fn background_child_keeps_spawning_turn_after_next_prompt() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("root.jsonl");let child=tmp.path.join("agent-Explorer-test.jsonl");
+    std::fs::write(&path,"").unwrap();std::fs::write(&child,include_str!("fixtures/agent-Explorer-test.jsonl")).unwrap();
+    std::fs::write(child.with_extension("meta.json"),include_str!("fixtures/agent-Explorer-test.meta.json")).unwrap();
+    process(&mut ctx,&payload("UserPromptSubmit","1970-01-01T00:00:01.000Z",&path)).unwrap();
+    let mut tool=payload("PreToolUse","1970-01-01T00:00:02.000Z",&path);tool["tool_use_id"]=json!("spawn");process(&mut ctx,&tool).unwrap();
+    let mut start=payload("SubagentStart","1970-01-01T00:00:03.000Z",&path);start["agent_id"]=json!("Explorer-test");process(&mut ctx,&start).unwrap();
+    let mut next=payload("UserPromptSubmit","1970-01-01T00:00:03.500Z",&path);next["prompt_id"]=json!("t2");process(&mut ctx,&next).unwrap();
+    let mut end=payload("SubagentStop","1970-01-01T00:00:05.000Z",&path);end["agent_id"]=json!("Explorer-test");end["prompt_id"]=json!("t2");end["agent_transcript_path"]=json!(child);
+    process(&mut ctx,&end).unwrap();
+    let all=records(&ctx);assert_eq!(all.len(),2);assert!(all.iter().all(|r|r.trace_key.as_deref()==Some("qwen:s:t1")));
+}

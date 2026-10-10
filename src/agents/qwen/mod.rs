@@ -6,14 +6,14 @@ use crate::{agents::{AgentSpec, common::{bridge::{self, Batch, Event}, jsonl::{s
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
-pub const SPEC: AgentSpec = AgentSpec {kind:"qwen",display:"Qwen Code",hook,plan:setup::plan,reply:None};
+pub const SPEC: AgentSpec = AgentSpec {kind:"qwen",display:"Qwen Code",hook,plan:setup::plan,reply:None,settle:Some(settle)};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Session {turn: String}
 #[derive(Default, Serialize, Deserialize)]
-struct ToolStart {ts: u64}
+struct ToolStart {ts: u64, turn: String}
 #[derive(Default, Serialize, Deserialize)]
 struct Child {turn: String, ts: u64, name: Option<String>}
 #[derive(Default, Serialize, Deserialize)]
@@ -39,12 +39,13 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
     let Some(ts) = text(p,"timestamp").and_then(timestamp_ns) else {return Ok(());};
     if !setup::EVENTS.contains(&event) || p.get("llm_response").is_some() || p.get("conversation_id").is_some()
         || p.get("permission_mode").is_some_and(|v| !["default","plan","auto_edit","auto","yolo"].contains(&v.as_str().unwrap_or(""))) {return Ok(());}
+    let _lock = ctx.lock("qwen-native")?;
     let state_key = key("session",session);
     let mut state: Session = ctx.load(&state_key)?;
     let child_id = text(p,"agent_id");
     let child: Child = if let Some(id) = child_id {ctx.load(&key("child",&format!("{session}:{id}")))?} else {Child::default()};
-    let turn = if !child.turn.is_empty() {child.turn.clone()} else {
-        text(p,"prompt_id").map(str::to_owned).filter(|_| !matches!(event,"SubagentStart"|"SubagentStop"))
+    let mut turn = if !child.turn.is_empty() {child.turn.clone()} else {
+        text(p,"prompt_id").map(str::to_owned)
             .unwrap_or_else(|| state.turn.clone())
     };
     let mut batch = Batch {v:1,agent:"qwen".into(),session_id:session.into(),session_path:Some(path.into()),cwd:Some(cwd.into()),agent_version:None,events:Vec::new()};
@@ -58,7 +59,7 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
         // transcript's promptId remains authoritative when it is available.
         transcript(ctx, Path::new(path), session, &state.turn, None, &mut batch)?;
         state.turn = text(p,"prompt_id").map(str::to_owned).unwrap_or_else(|| format!("prompt-{ts}"));
-        batch.events.push(Event::TurnStart {turn_id:state.turn.clone(),ts_ns:ts,prompt:value(p,"prompt")});
+        batch.events.push(Event::TurnStart {turn_id:state.turn.clone(),ts_ns:ts,prompt:value(p,"prompt"),metadata:BTreeMap::new()});
         bridge::ingest(ctx,batch)?;
         ctx.save(&state_key,&state)?;
         return Ok(());
@@ -74,22 +75,27 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
         if let Some(id) = child_id {
             let child_path = text(p,"agent_transcript_path").map(Path::new);
             let parent = child_path.and_then(|path| parent_tool(path,session,id));
-            batch.events.push(Event::SubagentStart {turn_id:turn.clone(),id:id.into(),parent_id:parent,ts_ns:if child.ts == 0 {ts} else {child.ts},name:child.name.or_else(||text(p,"agent_type").map(str::to_owned))});
-            if let Some(path) = child_path {transcript(ctx,path,session,&turn,Some(id),&mut batch)?;}
+            if let Some(tool_id) = &parent {
+                let spawning: ToolStart = ctx.load(&key("tool",&format!("{session}:{tool_id}")))?;
+                if !spawning.turn.is_empty() {turn=spawning.turn;}
+            }
+            batch.events.push(Event::SubagentStart {turn_id:turn.clone(),id:id.into(),parent_id:parent,ts_ns:if child.ts == 0 {ts} else {child.ts},name:child.name.or_else(||text(p,"agent_type").map(str::to_owned)),metadata:BTreeMap::new()});
+            if let Some(path) = child_path {transcript(ctx,path,session,&turn,Some(id),&mut batch)?; remember_tail(ctx,path,session,&turn,Some(id),cwd)?;}
             batch.events.push(Event::SubagentEnd {turn_id:turn,id:id.into(),ts_ns:ts,status:Some("ok".into()),output:value(p,"last_assistant_message")});
         }
     } else {
         transcript(ctx,Path::new(path),session,&turn,child_id,&mut batch)?;
+        if matches!(event,"Stop"|"StopFailure"|"SessionEnd") {remember_tail(ctx,Path::new(path),session,&turn,child_id,cwd)?;}
         match event {
             "PreToolUse" => {
-                if let Some(id) = text(p,"tool_use_id") {ctx.save(&key("tool",&format!("{session}:{id}")),&ToolStart {ts})?;}
+                if let Some(id) = text(p,"tool_use_id") {ctx.save(&key("tool",&format!("{session}:{id}")),&ToolStart {ts,turn:turn.clone()})?;}
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 if let Some(id) = text(p,"tool_use_id") {
                     let start: ToolStart = ctx.load(&key("tool",&format!("{session}:{id}")))?;
                     let duration = p.get("duration_ms").and_then(Value::as_f64).filter(|d| d.is_finite() && *d >= 0.0).map(|d| (d * 1_000_000.0).min(u64::MAX as f64) as u64);
                     let start_ns = duration.map(|d| ts.saturating_sub(d)).unwrap_or(if start.ts == 0 {ts} else {start.ts.min(ts)});
-                    batch.events.push(Event::Tool {turn_id:turn,id:id.into(),parent_id:child_id.map(str::to_owned),name:text(p,"tool_name").map(str::to_owned),start_ns,end_ns:ts,input:value(p,"tool_input"),output:value(p,"tool_response"),status:Some(if event == "PostToolUseFailure" {"error"} else {"ok"}.into()),error:text(p,"error").map(str::to_owned)});
+                    batch.events.push(Event::Tool {turn_id:turn,id:id.into(),parent_id:child_id.map(str::to_owned),name:text(p,"tool_name").map(str::to_owned),start_ns,end_ns:ts,input:value(p,"tool_input"),output:value(p,"tool_response"),status:Some(if event == "PostToolUseFailure" {"error"} else {"ok"}.into()),error:text(p,"error").map(str::to_owned),metadata:BTreeMap::new()});
                 }
             }
             "Stop" | "StopFailure" | "SessionEnd" if child_id.is_none() => {
@@ -102,12 +108,8 @@ fn process(ctx: &mut HookCtx, p: &Value) -> Result<()> {
 }
 
 fn prime(ctx: &HookCtx, path: &Path) -> Result<()> {
-    let mut state = Transcript::default();
-    match jsonl::read_new(path,&mut state.cursor) {
-        Ok(_) => ctx.save(&key("transcript",&path.to_string_lossy()),&state),
-        Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind()==std::io::ErrorKind::NotFound) => Ok(()),
-        Err(e) => Err(e),
-    }
+    let state = Transcript {cursor:jsonl::at_end(path)?,..Default::default()};
+    ctx.save(&key("transcript",&path.to_string_lossy()),&state)
 }
 fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str, parent: Option<&str>, batch: &mut Batch) -> Result<()> {
     let state_key = key("transcript",&path.to_string_lossy());
@@ -120,7 +122,8 @@ fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str
     for line in lines {
         let Ok(r) = serde_json::from_str::<Value>(&line) else {continue;};
         if text(&r,"sessionId") != Some(session) {continue;}
-        if parent.is_some() && text(&r,"agentId").is_some_and(|id| Some(id) != parent) {continue;}
+        if parent.is_some() && text(&r,"agentId") != parent {continue;}
+        if parent.is_none() && text(&r,"agentId").is_some() {continue;}
         let Some(ts) = text(&r,"timestamp").and_then(timestamp_ns) else {continue;};
         if parent.is_none() {
             if let Some(id) = text(&r,"promptId") {state.turn=id.into();}
@@ -135,7 +138,7 @@ fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str
                 if let Some(message) = value(&r,"message") {state.input.push(message);}
                 state.last_ns=ts;
             }
-            Some("assistant") if !turn.is_empty() => {
+            Some("assistant") if !turn.is_empty() && !ctx.proxy_active => {
                 let Some(id) = text(&r,"uuid") else {continue;};
                 let usage = r.get("usageMetadata").map(|u| Usage {
                     input_tokens:u.get("promptTokenCount").and_then(Value::as_u64),
@@ -144,11 +147,12 @@ fn transcript(ctx: &mut HookCtx, path: &Path, session: &str, fallback_turn: &str
                     reasoning_tokens:u.get("thoughtsTokenCount").and_then(Value::as_u64),
                     ..Default::default()
                 });
+                let mut metadata = BTreeMap::new();
                 if usage.as_ref().is_some_and(|u|u.reasoning_tokens.is_some()) {
-                    ctx.metadata.insert("qwen.reasoning_usage_source".into(),json!("provider_or_text_estimate"));
+                    metadata.insert("qwen.reasoning_usage_source".into(),json!("provider_or_text_estimate"));
                 }
                 if batch.agent_version.is_none() {batch.agent_version=text(&r,"version").map(str::to_owned);}
-                batch.events.push(Event::Chat {turn_id:turn.into(),id:id.into(),parent_id:parent.map(str::to_owned),start_ns:if state.last_ns==0 {ts} else {state.last_ns.min(ts)},end_ns:ts,model:text(&r,"model").map(str::to_owned),provider:None,input:if state.input.is_empty() {None} else {Some(json!(state.input))},output:value(&r,"message"),usage,cost_usd:None,aux_task:None,status:Some("ok".into()),error:None});
+                batch.events.push(Event::Chat {turn_id:turn.into(),id:id.into(),parent_id:parent.map(str::to_owned),start_ns:if state.last_ns==0 {ts} else {state.last_ns.min(ts)},end_ns:ts,model:text(&r,"model").map(str::to_owned),provider:None,input:if state.input.is_empty() {None} else {Some(json!(state.input))},output:value(&r,"message"),usage,cost_usd:None,aux_task:None,status:Some("ok".into()),error:None,metadata});
                 state.input.clear();state.last_ns=ts;
             }
             _ => {}
@@ -187,4 +191,33 @@ fn timestamp_ns(s: &str) -> Option<u64> {
         digits.parse::<u64>().ok()? * 10u64.pow(9-digits.len() as u32)
     };
     (days*86400+hour*3600+minute*60+second).checked_mul(1_000_000_000)?.checked_add(fraction)
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct Tail {
+    path: String, session: String, turn: String, parent: Option<String>, cwd: String,
+    until_ns: u64, metadata: BTreeMap<String,Value>, run_id: Option<String>, proxy_active: bool,
+}
+fn remember_tail(ctx: &HookCtx, path: &Path, session: &str, turn: &str, parent: Option<&str>, cwd: &str) -> Result<()> {
+    let path = path.to_string_lossy().into_owned();
+    ctx.save(&key("tail",&path),&Tail {path,session:session.into(),turn:turn.into(),parent:parent.map(str::to_owned),cwd:cwd.into(),until_ns:ctx.now_ns().saturating_add(6_000_000_000),metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active})
+}
+fn settle(ctx: &mut HookCtx) -> Result<bool> {
+    let _lock = ctx.lock("qwen-native")?;
+    let mut pending = false;
+    for entry in std::fs::read_dir(ctx.state_dir())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str().filter(|s|s.starts_with("tail-") && s.ends_with(".json")) else {continue;};
+        let tail: Tail = ctx.load(name)?;
+        let mut batch = Batch {v:1,agent:"qwen".into(),session_id:tail.session.clone(),session_path:Some(tail.path.clone()),cwd:Some(tail.cwd),agent_version:None,events:Vec::new()};
+        let old_metadata = std::mem::replace(&mut ctx.metadata,tail.metadata);
+        let old_run = std::mem::replace(&mut ctx.run_id,tail.run_id);
+        let old_proxy = std::mem::replace(&mut ctx.proxy_active,tail.proxy_active);
+        let result = transcript(ctx,Path::new(&tail.path),&tail.session,&tail.turn,tail.parent.as_deref(),&mut batch);
+        ctx.metadata=old_metadata;ctx.run_id=old_run;ctx.proxy_active=old_proxy;
+        result?;
+        if ctx.now_ns() >= tail.until_ns {std::fs::remove_file(entry.path())?;} else {pending=true;}
+    }
+    Ok(pending)
 }

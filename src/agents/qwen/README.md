@@ -7,10 +7,10 @@ Qwen uses Claude-style command hooks, **not** Gemini's `AfterModel`/`BeforeModel
 Each of SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, SubagentStart, SubagentStop, Stop, StopFailure and SessionEnd receives:
 
 ```json
-{"matcher":"*","hooks":[{"type":"command","command":"<shared quoted binary command> hook qwen --state-dir <STATE> --config-dir <CONFIG>","timeout":5,"env":{"HERDR_RESPAN_QWEN_HOOK":"1"}}]}
+{"matcher":"*","hooks":[{"type":"command","command":"<shared quoted binary command> hook qwen --state-dir <STATE> --config-dir <CONFIG>","timeout":5000,"env":{"HERDR_RESPAN_QWEN_HOOK":"1"}}]}
 ```
 
-The real command is built by the shared hook-command helper with absolute, shell-quoted paths. Windows entries additionally specify `shell: "powershell"` and use `& 'binary' ...`, avoiding Git Bash/cmd autodetection ambiguity. The timeout is **five seconds**, not milliseconds; Qwen only interprets values >=1000 as legacy milliseconds. Hooks write nothing to stdout. Core gates on HERDR_ENV, opt-out and pause; the adapter additionally requires its per-command environment marker and Qwen-shaped payloads.
+The real command is built by the shared hook-command helper with absolute, shell-quoted paths. Windows entries additionally specify `shell: "powershell"` and use `& 'binary' ...`, avoiding Git Bash/cmd autodetection ambiguity. The timeout is **five seconds**: `5000` uses Qwen’s explicit >=1000 legacy-millisecond interpretation, remaining compatible with older millisecond-only releases; values below 1000 mean seconds on current Qwen. Hooks write nothing to stdout. Core gates on HERDR_ENV, opt-out and pause; the adapter additionally requires its per-command environment marker and Qwen-shaped payloads.
 
 Conservative basic-hook floor: Qwen Code **0.14.0**. The complete schema below is sourced at `c3968ace2f54af27b626c3f75ae72cf889533ef9`, not proven on the earliest release. `disableAllHooks`, `--bare`, `--safe-mode`, and untrusted project hooks suppress capture.
 
@@ -21,7 +21,7 @@ Conservative basic-hook floor: Qwen Code **0.14.0**. The complete schema below i
 - Tools: native `tool_use_id`; tool response/failure, arguments, result, duration_ms when exposed, enclosing child agent_id.
 - Subagents: SubagentStart/Stop and child transcript. The adapter defers bridge start emission until Stop to read the sibling `.meta.json` sidecar. Matching `agentId` and `parentSessionId` permit causal parenting by `toolUseId`; absent/invalid sidecars leave the child directly under the turn. No timestamp-nearest-tool inference.
 
-Core owns deterministic keys, span parenting, redaction, caps, proxy suppression and spool delivery. Adapter state contains only scrubbed input and correlation/cursor state in `$STATE/agents/qwen/`. Historical transcript lines are skipped on SessionStart/resume, partial final lines wait for a later observation, and the shared JSONL cursor handles truncation/rotation. Bridge deduplication prevents repeated hooks/replayed UUIDs from charging usage twice.
+Core owns deterministic keys, span parenting, redaction, caps, proxy suppression and spool delivery. Adapter state contains only scrubbed input and correlation/cursor state in `$STATE/agents/qwen/`. Historical transcript lines are skipped on SessionStart/resume; partial final lines wait for a later observation. Stop/SubagentStop also register a six-second final-tail window, drained by Core’s bounded flush settlement callbacks, so transcript writes that lag the hook can still arrive. The shared JSONL cursor handles truncation/rotation, and the shared state lock serializes concurrent native parser invocations. Bridge deduplication prevents repeated hooks/replayed UUIDs from charging usage twice.
 
 ### Fidelity limits
 
@@ -39,4 +39,4 @@ All fixtures are synthetic; no real sessions, secrets, personal data, credential
 - `fixtures/agent-Explorer-test.meta.json`: `packages/core/src/agents/agent-transcript.ts:107-132`; `packages/core/src/tools/agent/agent.ts:3760-3765,4685-4690` (causal parent tool id).
 - `fixtures/expected-batch.json`: hand-derived bridge-v1 golden translation of these synthetic fixtures.
 
-Runnable checks: `cargo test agents::qwen`; fixture pipeline is compared with the golden bridge batch through the actual assembler/spool, including turn/chat/tool/child parenting and non-cumulative usage. Other checks cover partial lines, replacement rotation, replay deduplication, resume/history skipping, foreign payload rejection, null usage, errors, sidecar identity and setup/remove round-trip preserving herdr. No live-agent or Windows execution claim is made; those require orchestrator-owned integration runs.
+Runnable checks: `cargo test agents::qwen`; fixture pipeline is compared with the golden bridge batch through the actual assembler/spool, including turn/chat/tool/child parenting and non-cumulative usage. Other checks cover partial lines, replacement rotation, replay deduplication, late-final settlement, proxy suppression including unknown-model child usage, resume/history skipping, foreign payload rejection, null usage, errors, sidecar identity and setup/remove round-trip preserving herdr. No live-agent or Windows execution claim is made; those require orchestrator-owned integration runs.

@@ -1,0 +1,10 @@
+{"v":1,"agent":"qwen","session_id":"s","session_path":null,"cwd":"/synthetic/repo","agent_version":"0.14.0","events":[
+{"type":"turn_start","turn_id":"t1","ts_ns":1000000000,"prompt":"Inspect a synthetic file"},
+{"type":"chat","turn_id":"t1","id":"a1","start_ns":1000000000,"end_ns":2000000000,"model":"qwen-test","input":[{"role":"user","parts":[{"text":"Inspect a synthetic file"}]}],"output":{"role":"model","parts":[{"text":"Inspecting"}]},"usage":{"input_tokens":20,"output_tokens":5,"cache_read_input_tokens":4,"reasoning_tokens":2},"status":"ok"},
+{"type":"chat","turn_id":"t1","id":"a2","start_ns":2000000000,"end_ns":3000000000,"model":"qwen-test","output":{"role":"model","parts":[{"functionCall":{"id":"provider-call","name":"task","args":{"prompt":"Inspect"}}}]},"usage":{"input_tokens":25,"output_tokens":3},"status":"ok"},
+{"type":"subagent_start","turn_id":"t1","id":"Explorer-test","parent_id":"spawn","ts_ns":3100000000,"name":"Explorer"},
+{"type":"chat","turn_id":"t1","id":"c1","parent_id":"Explorer-test","start_ns":4000000000,"end_ns":4000000000,"output":{"role":"model","parts":[{"text":"Child done"}]},"usage":{"input_tokens":8,"output_tokens":2},"status":"ok"},
+{"type":"subagent_end","turn_id":"t1","id":"Explorer-test","ts_ns":4500000000,"status":"ok","output":"Child done"},
+{"type":"tool","turn_id":"t1","id":"spawn","name":"task","start_ns":3000000000,"end_ns":5000000000,"input":{"prompt":"Inspect"},"output":{"response_parts":[{"text":"Child done"}]},"status":"ok"},
+{"type":"turn_end","turn_id":"t1","ts_ns":6000000000,"output":"Done","status":"ok"}
+]}

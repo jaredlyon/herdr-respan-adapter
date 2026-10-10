@@ -1,0 +1,9 @@
+[
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"SessionStart","timestamp":"1970-01-01T00:00:00.000Z","permission_mode":"default","source":"startup","model":"qwen-test"},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"UserPromptSubmit","timestamp":"1970-01-01T00:00:01.000Z","prompt_id":"t1","prompt":"Inspect a synthetic file"},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"PreToolUse","timestamp":"1970-01-01T00:00:03.000Z","prompt_id":"t1","permission_mode":"default","tool_use_id":"spawn","tool_call_id":"provider-call","tool_name":"task","tool_input":{"prompt":"Inspect"}},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"SubagentStart","timestamp":"1970-01-01T00:00:03.100Z","prompt_id":"t1","permission_mode":"default","agent_id":"Explorer-test","agent_type":"Explorer"},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"SubagentStop","timestamp":"1970-01-01T00:00:04.500Z","prompt_id":"t1","permission_mode":"default","agent_id":"Explorer-test","agent_type":"Explorer","agent_transcript_path":"__CHILD__","stop_hook_active":false,"last_assistant_message":"Child done","background_tasks":[],"crons":[]},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"PostToolUse","timestamp":"1970-01-01T00:00:05.000Z","prompt_id":"t1","permission_mode":"default","tool_use_id":"spawn","tool_call_id":"provider-call","tool_name":"task","tool_input":{"prompt":"Inspect"},"tool_response":{"response_parts":[{"text":"Child done"}]},"duration_ms":2000},
+ {"session_id":"s","transcript_path":"__ROOT__","cwd":"/synthetic/repo","hook_event_name":"Stop","timestamp":"1970-01-01T00:00:06.000Z","prompt_id":"t1","stop_hook_active":false,"last_assistant_message":"Done","input_tokens":999,"background_tasks":[],"crons":[]}
+]

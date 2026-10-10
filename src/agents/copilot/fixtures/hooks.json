@@ -1,0 +1,8 @@
+[
+  {"event":"userPromptSubmitted","payload":{"sessionId":"synthetic-session","timestamp":1700000000000,"cwd":"/synthetic/repo","prompt":"List the project files."}},
+  {"event":"postToolUse","payload":{"sessionId":"synthetic-session","timestamp":1700000000500,"cwd":"/synthetic/repo","toolName":"bash","toolArgs":{"command":"pwd"},"toolResult":{"resultType":"success","textResultForLlm":"/synthetic/repo"}}},
+  {"event":"agentStop","payload":{"sessionId":"synthetic-session","timestamp":1700000001000,"cwd":"/synthetic/repo","transcriptPath":"/synthetic/copilot/session-state/synthetic-session/events.jsonl","stopReason":"end_turn","stop_hook_active":false}},
+  {"event":null,"payload":{"hook_event_name":"UserPromptSubmit","session_id":"synthetic-compatible","timestamp":"2023-11-14T22:13:20.000Z","cwd":"/synthetic/repo","prompt":"List the project files."}},
+  {"event":null,"payload":{"hook_event_name":"PostToolUseFailure","session_id":"synthetic-compatible","timestamp":"2023-11-14T22:13:20.500Z","cwd":"/synthetic/repo","tool_name":"Bash","tool_input":{"command":"false"},"error":"Synthetic command failed"}},
+  {"event":null,"payload":{"hook_event_name":"Stop","session_id":"synthetic-compatible","timestamp":"2023-11-14T22:13:21.000Z","cwd":"/synthetic/repo","transcript_path":"/synthetic/copilot/session-state/synthetic-compatible/events.jsonl","stop_reason":"end_turn","stop_hook_active":false}}
+]

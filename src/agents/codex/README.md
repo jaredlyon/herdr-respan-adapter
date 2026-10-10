@@ -1,0 +1,41 @@
+# Codex
+
+## Setup and trust
+
+`setup codex` appends separate Claude-style command groups to `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), beside herdr's entries. Events: **SessionStart, UserPromptSubmit, PostToolUse, SubagentStart, SubagentStop, Stop, Interrupt, SessionEnd**. It ensures `[features] hooks = true` in adjacent `config.toml`; an existing conflicting value is never overwritten. `--project DIR` selects `DIR/.codex/` instead. Nonempty `CODEX_HOME` must already be a directory, matching Codex's resolver. The command is the shared quoted absolute binary/arguments form, **cmd.exe** syntax on Windows, POSIX on Unix. No `notify`, auth config, provider URL or trust-store edits.
+
+After setup, run **`/hooks` in Codex and approve the herdr-respan command definitions once**. Changed definitions require another approval; project-local hooks also require project trust. Hooks are enabled by default in the inspected upstream snapshot, but untrusted hooks still do not run. Minimum compatibility: a Codex build exposing this `hooks.json` protocol and `transcript_path` (see pinned schema below); no released minimum version was live-verified. Older rollouts can use the explicitly lower-fidelity token-count fallback.
+
+### Surface status contract
+
+HerdrSurface owns the status hint. Use Core's `setup::installed(state, "codex")` / `status::report().agents` and Codex's `last_span_ns`: **installed + no last Codex span = `awaiting Codex trust`**. No adapter-written trust marker is necessary. A SessionStart with no completed activity deliberately produces no span. This is an operational hint, not proof of a rejected trust decision: disabled hooks, a fresh idle session, a gate or unavailable transcript can also explain no spans. Never write Codex's trust store. Once a Codex span is observed, clear the hint.
+
+## Capture
+
+Native hooks are identified by event/turn/session fields plus a rollout-named transcript, then verified against **`session_meta.id`**. Non-Codex transcripts and foreign hook payloads produce no spans. The hook uses `transcript_path` directly, not herdr's pane session report, filename lookup, or global session directory scans. State is under `$STATE/agents/codex/`, with an incremental cursor per actual file and root-session child mappings; partial JSONL tails, deferred file creation, truncation and replacement are handled. Queued hook payloads are persisted through Core's redacting store. Delayed Stop/child completion waits for durable transcript boundaries instead of guessing that all usage was written. Settle retries are owned by Core.
+
+- **Turn:** native task/turn boundaries and prompt/Stop hooks. Root `session_id` remains the Respan thread identifier.
+- **Chat:** exactly one event per durable `token_usage_record.response_id`; use **`usage`**, never `turn_token_usage` or `thread_token_usage`. Model comes from the active `turn_context.model`; provider from session metadata. Unknown fields stay absent. Cache-read, cache-write and reasoning details are breakdowns, not additional tokens.
+- **Tool:** function/custom/local-shell calls joined with results by **`call_id`**; local PostToolUse hooks; completed paginated command/MCP/dynamic/file-change/collaboration/web items and hosted web-search calls. The shared bridge deduplicates repeated call/response IDs.
+- **Subagent:** SubagentStart/Stop plus `agent_transcript_path`; child chats/tools are translated into the root turn with `parent_id=agent_id`. The enclosing agent span is parented to the identified `spawn_agent` tool call (or the currently pending spawn call). Inherited records below the session's history-start ordinal are ignored, and inherited token records with another `thread_id` are excluded.
+
+Core alone owns span keys, span parenting, content caps/redaction, toggles, spool and OTLP. Queued hooks retain their original pane metadata, run ID and proxy flag when settled later. Model spans are suppressed by Core under a proxy; this adapter also recognizes Respan-routed OpenAI/custom-provider URLs in the user `config.toml` adjacent to a normal/archived session directory; this adapter never changes login/provider settings. `run codex`'s inference override/WS transport belongs to Proxy, not this adapter.
+
+### Fidelity limits
+
+`token_usage_record` has no precise request-start timestamp or cost; request windows here are **rollout boundaries**, not measured network latency/TTFT. Cost stays unknown. Requests completed without a usage record cannot be reconstructed as model calls from this source. Transcript schemas are not a stable public hook API. Native tool output may already be capped by Codex; missing call IDs cannot be safely joined. A child hook without a parent mapping/transcript cannot reconstruct an unknown spawning tool. Pre-ordinal child histories cannot perfectly distinguish inherited response items; token records are still thread-checked. Pending spawn association is best-effort if simultaneous spawn calls omit an explicit relationship.
+
+**Legacy `event_msg/token_count` fallback:** deferred until turn completion, ignored for any turn containing durable response usage. Only increasing cumulative totals with nonzero input/output usage produce candidates; duplicate rate-limit snapshots and zero-usage local recomputations are ignored. IDs are based on the cumulative snapshot total, not the snapshot arrival. Chat metadata records `codex.usage_source=legacy-token-count` (modern records use `token_usage_record`), with `codex.timing=rollout-boundaries`. This is **low fidelity**: snapshots cannot prove a request identity, can miss identical/synthetic transitions, and full-response content/timing cannot be attributed exactly. Never describe this as one model call per snapshot. Modern and legacy usage are not emitted together within a turn.
+
+## Fixtures and checks
+
+All fixtures are **synthetic**, not captured agent/provider traffic. Provenance: [`openai/codex@4bad6d78e9b50f9fa8bd941f1db012ed491ad2da`](https://github.com/openai/codex/tree/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da):
+
+- `stop.json`: [`codex-rs/hooks/src/schema.rs:588-601`](https://github.com/openai/codex/blob/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da/codex-rs/hooks/src/schema.rs#L588).
+- `modern.jsonl`: rollout envelope [`history/src/rollout_payload.rs:31-71`](https://github.com/openai/codex/blob/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da/codex-rs/history/src/rollout_payload.rs#L31), per-response usage [`protocol/src/protocol.rs:2361-2433`](https://github.com/openai/codex/blob/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da/codex-rs/protocol/src/protocol.rs#L2361), model context `protocol.rs:3414-3460`, tools [`protocol/src/models.rs:1064-1210`](https://github.com/openai/codex/blob/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da/codex-rs/protocol/src/models.rs#L1064). Includes two response IDs with different per-request usage, a duplicate modern snapshot, and a joined tool.
+- `legacy.jsonl`: snapshot schema `protocol.rs:2396-2433`, recompute/rate-limit behavior `core/src/session/mod.rs:4910-4998`; duplicate and synthetic-zero snapshots must not generate extra chat events.
+- `child.jsonl`: session metadata/history offsets `protocol.rs:3243-3331`, root/child hook identity `hooks/src/schema.rs:549-562,606-622`; shared root session, separate actual child thread, inherited parent usage and root-parented child events.
+- `paginated.jsonl`: [`protocol/src/items.rs:45-74,277-315`](https://github.com/openai/codex/blob/4bad6d78e9b50f9fa8bd941f1db012ed491ad2da/codex-rs/protocol/src/items.rs#L45) and `protocol.rs:2055-2075`; a completed failed command, with no invented model usage.
+- `*.batch.json`: expected bridge v1 translations of the corresponding source-derived fixtures, not independently captured upstream data.
+
+Tests cover fixture→golden Batch, bridge→spool tree, response replay dedupe, child thread/tool parenting, incremental reads, foreign payload rejection, and setup/remove preserving existing herdr groups and TOML. All config edits in tests use temporary directories. Windows command syntax is source-derived and covered by a unit assertion, not a real Windows hook execution. These slice checks are left for Main to run after integrating the additive Core API. No live agent, login, provider or Respan call is part of this slice.

@@ -22,7 +22,9 @@ shared gate and failure handling keep them exit-zero/no-op outside herdr.
   is normalized from `model` role to `assistant`; output uses the first candidate
   and does not duplicate the translator's `text` and `parts` copies.
 - Tools pair `BeforeTool` and `AfterTool` by name and hashed arguments, FIFO for
-  identical invocations. Gemini does not expose tool-use ids, so simultaneous
+  identical invocations. A persisted sequence suffix makes tool ids unique even
+  when different hooks share Gemini's millisecond timestamp. Gemini does not expose
+  tool-use ids, so simultaneous
   identical tools cannot be unambiguously distinguished. Unfinished tools and
   an open turn at SessionEnd are emitted as errors.
 - No native subagent spans: this pinned hook vocabulary has no subagent events,
@@ -73,6 +75,10 @@ content:
 - `fixtures/session.jsonl`: synthetic full-message/update records from
   [`services/chatRecordingTypes.ts:13-169`](https://github.com/google-gemini/gemini-cli/blob/9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83/packages/core/src/services/chatRecordingTypes.ts#L13-L169)
   and [`chatRecordingService.ts:1043-1164`](https://github.com/google-gemini/gemini-cli/blob/9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83/packages/core/src/services/chatRecordingService.ts#L1043-L1164).
+- `fixtures/tools-same-timestamp.json`: synthetic concurrent tool payloads from
+  `hooks/types.ts:505-718` above, sharing a timestamp because
+  [`hookEventHandler.ts:389`](https://github.com/google-gemini/gemini-cli/blob/9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83/packages/core/src/hooks/hookEventHandler.ts#L389)
+  constructs base inputs with `new Date().toISOString()` (millisecond precision).
 - `fixtures/expected-batch.json`: adapter golden derived from these synthetic
   payloads and the shared bridge v1 contract, not a captured upstream payload.
   Inline tools, foreign Qwen/Claude inputs, and settings copies in tests are
@@ -81,7 +87,7 @@ content:
 
 Tests cover a golden Batch, exactly one chat span for a multi-chunk request,
 actual bridge spool parenting and deduplication, cross-process state, multiple
-model rounds/tools per turn, foreign rejection, metadata-only persistence, and
+model rounds/tools per turn, same-timestamp concurrent tool identities, foreign rejection, metadata-only persistence, and
 setup→remove with existing herdr/telemetry controls. No real Gemini session,
 Windows process launch, provider/proxy login, or Respan delivery has been
 exercised by this slice.

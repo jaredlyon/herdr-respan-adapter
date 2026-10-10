@@ -15,6 +15,8 @@ struct State {
     turn: Option<String>,
     request: Option<Request>,
     tools: VecDeque<Tool>,
+    #[serde(default)]
+    tool_sequence: u64,
     transcript: jsonl::Cursor,
     transcript_path: Option<String>,
     token_ids: VecDeque<String>,
@@ -98,6 +100,10 @@ fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
     ctx.save(&key, &state)
 }
 
+fn next_tool_id(state: &mut State, payload: &Value) -> Result<String> {
+    state.tool_sequence = state.tool_sequence.checked_add(1).ok_or("Gemini tool sequence exhausted")?;
+    Ok(format!("tool-{}-{}", text(payload, "timestamp").expect("validated timestamp"), state.tool_sequence))
+}
 fn ensure_turn(state: &mut State, payload: &Value, now: u64, events: &mut Vec<Event>) -> String {
     state.turn.get_or_insert_with(|| {
         let id = format!("turn-{}", text(payload, "timestamp").unwrap_or("unknown"));
@@ -200,7 +206,8 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
         "BeforeTool" => {
             ensure_turn(state, payload, now, events);
             let mut input = payload.get("tool_input").cloned(); ctx.scrub_content(&mut input)?;
-            state.tools.push_back(Tool { id: format!("tool-{}", text(payload, "timestamp").unwrap()), name: text(payload, "tool_name").unwrap().into(), input, fingerprint: digest(&serde_json::to_vec(&payload["tool_input"])?), start: now });
+            let id = next_tool_id(state, payload)?;
+            state.tools.push_back(Tool { id, name: text(payload, "tool_name").unwrap().into(), input, fingerprint: digest(&serde_json::to_vec(&payload["tool_input"])?), start: now });
         }
         "AfterTool" => {
             let turn_id = ensure_turn(state, payload, now, events);
@@ -208,10 +215,11 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
             let fingerprint = digest(&serde_json::to_vec(&payload["tool_input"])?);
             let index = state.tools.iter().position(|tool| tool.name == name && tool.fingerprint == fingerprint);
             let tool = index.and_then(|i| state.tools.remove(i));
+            let id = match &tool { Some(tool) => tool.id.clone(), None => next_tool_id(state, payload)? };
             let mut input = tool.as_ref().and_then(|t| t.input.clone()).or_else(|| payload.get("tool_input").cloned()); ctx.scrub_content(&mut input)?;
             let error = payload.pointer("/tool_response/error").filter(|e| !e.is_null()).map(|e| e.as_str().map(str::to_owned).unwrap_or_else(|| e.to_string()));
             let mut output = payload.get("tool_response").cloned(); ctx.scrub_content(&mut output)?;
-            events.push(Event::Tool { turn_id, id: tool.as_ref().map_or_else(|| format!("tool-{}", text(payload, "timestamp").unwrap()), |t| t.id.clone()), parent_id: None, name: Some(name.into()), start_ns: tool.as_ref().map_or(now, |t| t.start), end_ns: now, input, output, status: Some(if error.is_some() { "error" } else { "ok" }.into()), error });
+            events.push(Event::Tool { turn_id, id, parent_id: None, name: Some(name.into()), start_ns: tool.as_ref().map_or(now, |t| t.start), end_ns: now, input, output, status: Some(if error.is_some() { "error" } else { "ok" }.into()), error });
         }
         "AfterAgent" | "SessionEnd" => {
             if let Some(turn_id) = state.turn.take() {

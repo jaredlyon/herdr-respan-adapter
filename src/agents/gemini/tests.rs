@@ -73,7 +73,7 @@ fn tool_boundary_and_second_request_stay_under_one_turn() {
     let all = records(&tmp); assert_eq!(all.len(), 5);
     let turn = all.iter().find(|r| r.log_type == "agent").unwrap();
     for child in all.iter().filter(|r| r.log_type != "agent") { assert_eq!(child.parent_key.as_ref(), Some(&turn.span_key)); }
-    assert!(all.iter().any(|r| r.span_key.ends_with("tool:tool-2026-10-09T12:00:01.000Z")));
+    assert!(all.iter().any(|r| r.span_key.ends_with("tool:tool-2026-10-09T12:00:01.000Z-1")));
 }
 #[test]
 fn foreign_payloads_and_unknown_events_are_silent() {
@@ -118,4 +118,24 @@ fn setup_preserves_telemetry_herdr_and_remove_roundtrips() {
     assert_eq!(changed["hooks"]["SessionStart"][0], original["hooks"]["SessionStart"][0]);
     crate::setup::remove(&ctx, &["gemini".into()]).unwrap();
     assert_eq!(serde_json::from_slice::<Value>(&std::fs::read(file).unwrap()).unwrap(), original);
+}
+
+#[test]
+fn concurrent_tools_with_identical_millisecond_timestamps_keep_distinct_spans() {
+    let tmp = crate::tests::Temp::new();
+    let mut payloads: Vec<Value> = serde_json::from_str(include_str!("fixtures/tools-same-timestamp.json")).unwrap();
+    for payload in &mut payloads { payload["transcript_path"] = json!(tmp.path.join("absent.jsonl").to_string_lossy()); }
+    assert_eq!(payloads[0]["timestamp"], payloads[1]["timestamp"]);
+    for payload in &payloads {
+        // Each native hook gets a new context, just like the actual one-shot process.
+        let mut ctx = context(&tmp);
+        hook(&mut ctx, &serde_json::to_vec(payload).unwrap()).unwrap();
+    }
+    let all = records(&tmp);
+    let tools: Vec<_> = all.iter().filter(|r| r.log_type == "tool").collect();
+    assert_eq!(tools.len(), 2);
+    assert_ne!(tools[0].span_key, tools[1].span_key);
+    assert_eq!(tools[0].parent_key, tools[1].parent_key);
+    assert!(tools.iter().any(|r| r.name == "read_file" && r.input == Some(json!({"path":"a"}))));
+    assert!(tools.iter().any(|r| r.name == "list_directory" && r.input == Some(json!({"path":"b"}))));
 }

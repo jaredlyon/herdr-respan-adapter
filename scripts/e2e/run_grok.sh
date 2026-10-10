@@ -54,6 +54,7 @@ for trace,tree in traces.items():
     chats=[s for s in tree if attrs(s)['respan.entity.log_type']=='chat']
     tools=[s for s in tree if attrs(s)['respan.entity.log_type']=='tool']
     assert len(turns)==1,tree
+    assert turns[0]['status']['code']==1,turns[0]
     assert len(chats)==(2 if tools else 1),tree
     assert not turns[0].get('parentSpanId')
     print('native trace',trace,turns[0]['name'])
@@ -67,7 +68,8 @@ for trace,tree in traces.items():
             print('  chat',s['name'],'usage unavailable natively')
         else:
             assert 'echo hra-e2e' in a['traceloop.entity.input'],a
-            assert 'hra-e2e' in a['traceloop.entity.output'],a
+            assert json.loads(a['traceloop.entity.output'])['value']['exit_code']==0,a
+            assert json.loads(a['traceloop.entity.output'])['value']['output_for_prompt']=='exit: 0\nhra-e2e\n',a
             print('  tool',s['name'],'echo hra-e2e -> hra-e2e')
     counts.append((len(turns),len(chats),len(tools)))
 assert sorted(counts)==[(1,1,0),(1,2,1)],counts
@@ -128,6 +130,7 @@ for trace,tree in traces.items():
     children=[s for s in tree if attrs(s)['respan.entity.log_type']=='chat']
     tools=[s for s in tree if attrs(s)['respan.entity.log_type']=='tool']
     assert len(turns)==1,tree
+    assert turns[0]['status']['code']==1,turns[0]
     assert len(children)==(4 if tools else 3),tree
     print('proxy trace',trace,turns[0]['name'])
     for s in children+tools:
@@ -137,7 +140,8 @@ for trace,tree in traces.items():
         else:
             a=attrs(s)
             assert 'echo hra-e2e' in a['traceloop.entity.input'],a
-            assert 'hra-e2e' in a['traceloop.entity.output'],a
+            assert json.loads(a['traceloop.entity.output'])['value']['exit_code']==0,a
+            assert json.loads(a['traceloop.entity.output'])['value']['output_for_prompt']=='exit: 0\nhra-e2e\n',a
             print('  tool',s['name'],'echo hra-e2e -> hra-e2e')
     counts.append((len(turns),len(children),len(tools)))
 assert sorted(counts)==[(1,3,0),(1,4,1)],counts

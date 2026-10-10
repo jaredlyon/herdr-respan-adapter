@@ -158,3 +158,21 @@ fn records(tmp: &crate::tests::Temp) -> Vec<SpanRecord> {
     assert!(output.iter().all(|r| r.run_id.as_deref()==Some("original-run") && r.metadata["herdr.pane_id"]=="original-pane"));
     assert!(!ctx.proxy_active); assert!(ctx.run_id.is_none()); assert!(ctx.metadata.is_empty());
 }
+
+#[test] fn interrupted_subagent_is_not_reported_successful() {
+    let mut s = Session { turn: Some("t".into()), ..Default::default() }; let mut events = vec![];
+    wire(&mut s, &json!({"type":"StepInterrupted","payload":{}}), 10, Some("child"), 16384, &mut events, 0);
+    wire(&mut s, &json!({"type":"TurnEnd","payload":{}}), 11, Some("child"), 16384, &mut events, 0);
+    assert!(matches!(&events[0], Event::SubagentEnd { status:Some(status), .. } if status=="error"));
+}
+
+#[test] fn replayed_wire_begin_retains_native_turn_identity() {
+    let mut s = Session::default(); let mut events = vec![];
+    native(&mut s, &fixtures()[1], 10, &mut events);
+    let begin = json!({"type":"TurnBegin","payload":{"user_input":"test"}});
+    wire(&mut s, &begin, 11, None, 16384, &mut events, 0);
+    wire(&mut s, &json!({"type":"TurnEnd","payload":{}}), 12, None, 16384, &mut events, 0);
+    wire(&mut s, &begin, 11, None, 16384, &mut events, 0);
+    assert_eq!(s.turn.as_deref(), Some("10"));
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::TurnStart { .. })).count(), 1);
+}

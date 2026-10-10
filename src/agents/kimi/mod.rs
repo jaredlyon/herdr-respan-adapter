@@ -4,7 +4,7 @@ mod setup;
 use crate::{agents::{common::{bridge::{self, Batch, Event}, jsonl::{self, Cursor}}, AgentSpec}, record::{HookCtx, Usage}, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
 pub const SPEC: AgentSpec = AgentSpec {
     kind: "kimi", display: "Kimi Code CLI", hook, plan: setup::plan, reply: None, settle: Some(settle),
@@ -16,9 +16,9 @@ struct State { sessions: BTreeMap<String, Session> }
 struct Session {
     metadata: BTreeMap<String, Value>, run_id: Option<String>, proxy_active: bool,
     cwd: String, share: Option<PathBuf>, wire: Option<PathBuf>, cursor: Cursor, baseline_ns: u64, backlog: Vec<Value>,
-    turn: Option<String>, awaiting_begin: bool, closed: bool, ended: bool, wire_end: u64,
+    turn: Option<String>, wire_turns: BTreeMap<u64, String>, awaiting_begin: bool, closed: bool, ended: bool, wire_end: u64,
     steps: BTreeMap<String, Step>, tools: BTreeMap<String, Tool>,
-    closing: Option<Closing>, done: BTreeMap<String, Pending>, outputs: BTreeMap<String, Value>,
+    closing: Option<Closing>, done: BTreeMap<String, Pending>, outputs: BTreeMap<String, Value>, interrupted: BTreeSet<String>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Step { start: u64, output: Vec<Value>, output_bytes: usize, last_tool: Option<String> }
@@ -111,7 +111,7 @@ fn native(s: &mut Session, p: &Value, now: u64, events: &mut Vec<Event>) {
     if event == "UserPromptSubmit" {
         let turn_id = now.to_string();
         events.push(Event::TurnStart { turn_id: turn_id.clone(), ts_ns: now, prompt: p.get("prompt").cloned(), metadata: BTreeMap::new() });
-        s.tools.clear(); s.done.clear(); s.steps.clear(); s.outputs.clear();
+        s.tools.clear(); s.done.clear(); s.steps.clear(); s.outputs.clear(); s.interrupted.clear();
         s.turn = Some(turn_id); s.awaiting_begin = true; s.closed = false; s.ended = false; s.closing = None;
         return;
     }
@@ -136,7 +136,8 @@ fn native(s: &mut Session, p: &Value, now: u64, events: &mut Vec<Event>) {
 
 fn close(s: &mut Session, ts: u64, events: &mut Vec<Event>) {
     if s.ended { s.closing = None; return; }
-    if let (Some(turn_id), Some(closing)) = (&s.turn, s.closing.take()) {
+    if let (Some(turn_id), Some(mut closing)) = (&s.turn, s.closing.take()) {
+        if s.interrupted.remove("") && closing.error.is_none() { closing.error = Some("step interrupted".into()); }
         events.push(Event::TurnEnd { turn_id: turn_id.clone(), ts_ns: ts.max(closing.ts), output: s.outputs.remove(""),
             status: Some(if closing.error.is_some() { "error" } else { "ok" }.into()), error: closing.error });
         s.ended = true; s.closed = true; s.awaiting_begin = false;
@@ -221,17 +222,24 @@ fn wire(s: &mut Session, message: &Value, ts: u64, parent: Option<&str>, cap: us
     }
     let key = parent.unwrap_or("").to_string();
     if kind == "TurnBegin" && parent.is_none() {
-        if s.awaiting_begin { s.awaiting_begin = false; }
-        else {
-            let turn_id = format!("wire-{ts}");
-            events.push(Event::TurnStart { turn_id: turn_id.clone(), ts_ns: ts, prompt: p.get("user_input").cloned(), metadata: BTreeMap::new() });
-            s.turn = Some(turn_id);
+        if let Some(turn_id) = s.wire_turns.get(&ts) {
+            s.turn = Some(turn_id.clone()); s.awaiting_begin = false;
+        } else {
+            if s.awaiting_begin { s.awaiting_begin = false; }
+            else {
+                let turn_id = format!("wire-{ts}");
+                events.push(Event::TurnStart { turn_id: turn_id.clone(), ts_ns: ts, prompt: p.get("user_input").cloned(), metadata: BTreeMap::new() });
+                s.turn = Some(turn_id);
+            }
+            if let Some(turn_id) = &s.turn { s.wire_turns.insert(ts, turn_id.clone()); }
+            if s.wire_turns.len() > 1024 { if let Some(first) = s.wire_turns.keys().next().copied() { s.wire_turns.remove(&first); } }
         }
         s.closed = false; s.ended = false;
     }
     let Some(turn_id) = s.turn.clone() else { return; };
     match kind {
-        "StepBegin" => { s.steps.insert(key, Step { start: ts, ..Default::default() }); }
+        "StepBegin" => { s.interrupted.remove(&key); s.steps.insert(key, Step { start: ts, ..Default::default() }); }
+        "StepInterrupted" => { s.interrupted.insert(key); }
         "StepRetry" => { s.steps.insert(key, Step { start: ts, ..Default::default() }); }
         "ContentPart" => {
             let step = s.steps.entry(key).or_default();
@@ -284,7 +292,8 @@ fn wire(s: &mut Session, message: &Value, ts: u64, parent: Option<&str>, cap: us
         "TurnEnd" => {
             s.steps.remove(&key);
             if let Some(parent) = parent {
-                events.push(Event::SubagentEnd { turn_id, id: parent.into(), ts_ns: ts, status: Some("ok".into()), output: s.outputs.remove(&key) });
+                let status = if s.interrupted.remove(&key) { "error" } else { "ok" };
+                events.push(Event::SubagentEnd { turn_id, id: parent.into(), ts_ns: ts, status: Some(status.into()), output: s.outputs.remove(&key) });
             } else { s.closed = true; s.wire_end = ts; close(s, ts, events); }
         }
         _ => {},

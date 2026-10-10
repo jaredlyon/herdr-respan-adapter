@@ -105,7 +105,7 @@ fn drain(paths:&Paths,config:&Config,creds:Option<&Credentials>,lock:&crate::spo
     }
     Ok(held_files)
 }
-fn cap_guard(state:&Path)->Result<std::fs::File> {
+fn cap_guard(state:&Path)->Result<crate::spool::CapGuard> {
     loop {if let Some(guard)=crate::spool::cap_lock(state)? {return Ok(guard);}std::thread::sleep(Duration::from_millis(1));}
 }
 fn retain_records(state:&Path,path:&Path,records:&[SpanRecord])->Result<()> {

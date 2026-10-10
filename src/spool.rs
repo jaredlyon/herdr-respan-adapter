@@ -82,12 +82,78 @@ pub fn ready(state: &Path) -> Result<Vec<PathBuf>> {
     paths.sort_by_key(|p| p.metadata().and_then(|m| m.modified()).ok());
     Ok(paths)
 }
-/// Shared with sender acknowledgement/removal; callers never wait for ownership.
-pub(crate) fn cap_lock(state: &Path) -> Result<Option<File>> {
-    coordinate(&state.join("spool/cap.coord"))
+/// Sender acknowledgement/removal shares this guard with cap eviction.
+/// Drop drains requests from nonblocking closers before releasing ownership.
+pub(crate) struct CapGuard { state: PathBuf, file: Option<File> }
+impl CapGuard {
+    fn release(&mut self) -> Result<()> { self.release_with(|| Ok(())) }
+    fn release_with(&mut self, mut before_unlock: impl FnMut() -> Result<()>) -> Result<()> {
+        loop {
+            let Some(file) = self.file.take() else { return Ok(()); };
+            let result = drain_cap_requests(&self.state).and_then(|_| before_unlock());
+            let unlocked = file.unlock(); drop(file);
+            result?; unlocked?;
+            // A request may have appeared after the final empty check while we
+            // still owned the lock. Recheck AFTER unlocking, then hand off or
+            // reacquire without waiting. Requests queued later acquire it themselves.
+            if cap_requests(&self.state)?.is_empty() { return Ok(()); }
+            self.file = coordinate(&self.state.join("spool/cap.coord"))?;
+        }
+    }
+}
+impl Drop for CapGuard {
+    fn drop(&mut self) {
+        if self.release().is_err() { crate::log::error(&self.state, "spool cap handoff failed"); }
+    }
+}
+pub(crate) fn cap_lock(state: &Path) -> Result<Option<CapGuard>> {
+    Ok(coordinate(&state.join("spool/cap.coord"))?.map(|file| CapGuard { state: state.into(), file: Some(file) }))
+}
+fn request_cap(state: &Path, max: u64) -> Result<()> {
+    let directory = state.join("spool/cap-requests"); fs::create_dir_all(&directory)?;
+    // Empty, atomically created markers encode only our numeric cap and ownership
+    // identifier. No records or unrelated file contents become spool publications.
+    let path = directory.join(format!("cap-{max}-{}.request", crate::record::random_id()?));
+    let mut options = OpenOptions::new(); options.create_new(true).write(true);
+    #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+    drop(options.open(path)?); Ok(())
+}
+fn cap_requests(state: &Path) -> Result<Vec<(PathBuf, u64)>> {
+    let entries = match fs::read_dir(state.join("spool/cap-requests")) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()), Err(e) => return Err(e.into()),
+    };
+    let mut requests = Vec::new();
+    for entry in entries {
+        let entry = entry?; let path = entry.path();
+        let file_type = match entry.file_type() { Ok(kind) => kind, Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, Err(e) => return Err(e.into()) };
+        if !file_type.is_file() || !path.extension().is_some_and(|e| e == "request") { continue; }
+        let Some((max, id)) = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.strip_prefix("cap-")).and_then(|s| s.split_once('-')) else { continue; };
+        if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) { continue; }
+        let Ok(max) = max.parse::<u64>() else { continue; };
+        match entry.metadata() {
+            Ok(metadata) if metadata.len() == 0 => requests.push((path, max)),
+            Ok(_) => {}, Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}, Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(requests)
+}
+fn drain_cap_requests(state: &Path) -> Result<()> {
+    loop {
+        let requests = cap_requests(state)?;
+        let Some(max) = requests.iter().map(|(_, max)| *max).min() else { return Ok(()); };
+        evict_ready(state, max)?;
+        for (path, _) in requests {
+            match fs::remove_file(path) { Ok(()) => {}, Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}, Err(e) => return Err(e.into()) }
+        }
+    }
 }
 pub fn enforce_cap(state: &Path, max: u64) -> Result<()> {
-    let Some(_guard) = cap_lock(state)? else { return Ok(()); };
+    request_cap(state, max)?; // Publish the request BEFORE testing ownership.
+    let Some(mut guard) = cap_lock(state)? else { return Ok(()); };
+    guard.release()
+}
+fn evict_ready(state: &Path, max: u64) -> Result<()> {
     let paths = ready(state)?;
     for (index, path) in paths.iter().enumerate() {
         // Ignore concurrently removed files rather than subtracting a stale size.
@@ -177,6 +243,8 @@ fn lock_unavailable(error: &std::io::Error) -> bool {
 impl Drop for Lock {
     fn drop(&mut self) {
         if fs::read_to_string(&self.path).ok().as_deref() == Some(&self.token) { let _ = fs::remove_file(&self.path); }
+        // Explicit unlock also releases fork/dup copies of the same OS lock description.
+        let _ = self._guard.unlock();
     }
 }
 fn settle_pending(state: &Path, agents: &[crate::agents::AgentSpec]) -> bool {
@@ -314,7 +382,7 @@ fn detached(cmd: &mut Command) {
         let mut writers = Vec::new(); for _ in 0..32 { let mut writer = Writer::new(&tmp.path, size * 4).unwrap(); writer.append(&rec).unwrap(); writers.push(writer); }
         let barrier = std::sync::Barrier::new(writers.len());
         std::thread::scope(|scope| { let threads: Vec<_> = writers.into_iter().map(|writer| { let barrier = &barrier; scope.spawn(move || { barrier.wait(); writer.finish().unwrap(); }) }).collect(); for thread in threads { thread.join().unwrap(); } });
-        enforce_cap(&tmp.path, size * 4).unwrap(); assert_eq!(ready(&tmp.path).unwrap().len(), 4); assert_eq!(dropped(&tmp.path), 28);
+        assert_eq!(ready(&tmp.path).unwrap().len(), 4); assert_eq!(dropped(&tmp.path), 28); assert!(cap_requests(&tmp.path).unwrap().is_empty());
     }
     #[test] fn cap_does_not_evict_while_sender_acknowledges() {
         let tmp = crate::tests::Temp::new(); for _ in 0..3 { let mut writer = Writer::new(&tmp.path, u64::MAX).unwrap(); writer.append(&SpanRecord::default()).unwrap(); writer.finish().unwrap(); }
@@ -322,7 +390,33 @@ fn detached(cmd: &mut Command) {
         std::thread::scope(|scope| { let state = &tmp.path; scope.spawn(move || enforce_cap(state, size).unwrap()).join().unwrap(); });
         assert_eq!(dropped(&tmp.path), 0); // Eviction cannot enter this acknowledgement critical section.
         fs::remove_file(&files[1]).unwrap(); fs::remove_file(&files[2]).unwrap();
-        assert!(files[0].exists()); assert_eq!(dropped(&tmp.path), 0); drop(acknowledgement); enforce_cap(&tmp.path, size).unwrap(); assert!(files[0].exists());
+        assert!(files[0].exists()); assert_eq!(dropped(&tmp.path), 0); drop(acknowledgement); assert!(files[0].exists()); assert_eq!(dropped(&tmp.path), 0); assert!(cap_requests(&tmp.path).unwrap().is_empty());
+    }
+    #[test] fn held_cap_publications_are_enforced_on_owner_release() {
+        let tmp = crate::tests::Temp::new(); let rec = SpanRecord::default(); let size = serde_json::to_vec(&rec).unwrap().len() as u64 + 1;
+        for _ in 0..2 { let mut writer = Writer::new(&tmp.path, size * 2).unwrap(); writer.append(&rec).unwrap(); writer.finish().unwrap(); }
+        let owner = cap_lock(&tmp.path).unwrap().unwrap(); assert_eq!(ready(&tmp.path).unwrap().len(), 2);
+        std::thread::scope(|scope| {
+            let state = &tmp.path; let rec = &rec;
+            scope.spawn(move || { for _ in 0..3 { let mut writer = Writer::new(state, size * 2).unwrap(); writer.append(rec).unwrap(); writer.finish().unwrap(); } }).join().unwrap();
+        });
+        assert_eq!(ready(&tmp.path).unwrap().len(), 5); assert_eq!(dropped(&tmp.path), 0); assert_eq!(cap_requests(&tmp.path).unwrap().len(), 3);
+        drop(owner); // No manual enforcement: ownership release must perform the handoff.
+        assert_eq!(ready(&tmp.path).unwrap().len(), 2); assert_eq!(dropped(&tmp.path), 3); assert!(cap_requests(&tmp.path).unwrap().is_empty());
+    }
+    #[test] fn request_between_empty_check_and_unlock_is_not_stranded() {
+        let tmp = crate::tests::Temp::new(); let rec = SpanRecord::default();
+        let mut late = Writer::new(&tmp.path, 0).unwrap(); late.append(&rec).unwrap(); let mut late = Some(late);
+        let mut owner = cap_lock(&tmp.path).unwrap().unwrap();
+        owner.release_with(|| { if let Some(writer) = late.take() { writer.finish()?; assert_eq!(ready(&tmp.path)?.len(), 1); } Ok(()) }).unwrap();
+        assert!(ready(&tmp.path).unwrap().is_empty()); assert_eq!(dropped(&tmp.path), 1); assert!(cap_requests(&tmp.path).unwrap().is_empty());
+    }
+    #[test] fn cap_requests_never_publish_or_delete_unowned_contents() {
+        let tmp = crate::tests::Temp::new(); let owner = cap_lock(&tmp.path).unwrap().unwrap();
+        let directory = tmp.path.join("spool/cap-requests"); fs::create_dir_all(&directory).unwrap();
+        let unowned = directory.join("cap-0-00000000000000000000000000000000.request"); fs::write(&unowned, b"unrelated contents").unwrap();
+        enforce_cap(&tmp.path, 0).unwrap(); drop(owner);
+        assert_eq!(fs::read(&unowned).unwrap(), b"unrelated contents"); assert!(ready(&tmp.path).unwrap().is_empty()); assert_eq!(dropped(&tmp.path), 0); assert!(cap_requests(&tmp.path).unwrap().is_empty());
     }
     #[test] fn stale_sender_lock_allows_spawn_eligibility() {
         let tmp = crate::tests::Temp::new(); let paths = Paths { state: tmp.path.clone(), config: tmp.path.join("config") };
@@ -337,5 +431,8 @@ fn detached(cmd: &mut Command) {
         let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=crate::record::HookCtx::new(paths.clone(),crate::config::Config::default(),"deferred",Default::default(),None,false).unwrap();let mut spec=crate::agents::AgentSpec {kind:"deferred",display:"deferred",hook,plan,reply:None,settle:Some(settle)};
         assert!(!settle_pending(&paths.state,std::slice::from_ref(&spec)));ctx.mark_settle_pending().unwrap();assert!(settle_pending(&paths.state,std::slice::from_ref(&spec)));spec.settle=None;assert!(!settle_pending(&paths.state,std::slice::from_ref(&spec)));assert!(!settle_pending(&paths.state,&[]));
         assert_eq!(has_settle_pending(&paths.state), settle_pending(&paths.state, crate::agents::AGENTS));
+    }
+    #[test] fn lock_drop_releases_duplicated_descriptor_before_reacquisition() {
+        let tmp=crate::tests::Temp::new();let held=Lock::acquire(&tmp.path).unwrap().unwrap();let inherited=held._guard.try_clone().unwrap();drop(held);let next=Lock::acquire(&tmp.path).unwrap();assert!(next.is_some());drop(next);drop(inherited);
     }
 }

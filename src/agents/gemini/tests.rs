@@ -157,8 +157,14 @@ fn concurrent_tools_with_identical_millisecond_timestamps_keep_distinct_spans() 
 #[test]
 fn captured_cli_turns_preserve_exact_model_rounds_usage_and_echo_tool() {
     let tmp = crate::tests::Temp::new();
-    let path = tmp.path.join("session.jsonl");
+    // Keep the native Gemini path discriminator for SessionStart/SessionEnd.
+    let path = tmp.path.join(".gemini/chats/session.jsonl");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut payloads: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    // The captured CLI emitted distinct callbacks; replay below reuses queue ids.
+    for (index, payload) in payloads.iter().enumerate() {
+        assert!(!payloads[..index].contains(payload), "duplicate captured callback at {index}");
+    }
     let tool_lines: Vec<_> = include_str!("fixtures/live-tool.jsonl").lines().collect();
     for payload in &mut payloads {
         payload["transcript_path"] = json!(path.to_string_lossy());

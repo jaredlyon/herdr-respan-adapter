@@ -174,7 +174,7 @@ impl Parser {
         } else if self.pending == b"data" || self.pending.starts_with(b"data:") {
             let data = self.pending.get(5..).unwrap_or_default();
             let data = data.strip_prefix(b" ").unwrap_or(data);
-            if self.data.len() + data.len() + 1 <= MAX_CAPTURE {
+            if self.data.len() + data.len() < MAX_CAPTURE {
                 self.data.extend_from_slice(data);
                 self.data.push(b'\n');
             } else {

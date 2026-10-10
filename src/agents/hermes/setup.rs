@@ -57,7 +57,8 @@ fn boundary(lines: &[String], start: usize, depth: usize) -> usize {
     (start + 1..lines.len()).find(|&i| !content(&lines[i]).trim().is_empty() && indent(&lines[i]) <= depth).unwrap_or(lines.len())
 }
 fn key(line: &str, name: &str) -> bool { content(line).trim_start().strip_prefix(name).is_some_and(|s| s.starts_with(':')) }
-fn flow_parts(line: &str) -> Result<(usize, usize, Vec<(usize, usize)>)> {
+type FlowParts = (usize, usize, Vec<(usize, usize)>);
+fn flow_parts(line: &str) -> Result<FlowParts> {
     let open = line.find('[').ok_or("plugins.enabled must be a list")?;
     let mut quote = None; let mut escaped = false; let mut start = open + 1; let mut parts = Vec::new();
     for (i, c) in line.char_indices().filter(|(i, _)| *i > open) {

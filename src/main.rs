@@ -45,21 +45,20 @@ fn dispatch(cli: Cli) -> Result<()> {
         println!("herdr-respan hook <agent> | lifecycle | flush [--detach] | setup <agent>... [--all] [--dry-run] [--yes] [--project DIR] | remove <agent>... [--all] | status | pause/resume [--workspace ID] | test | startup | proxy serve | run | config export/import/push | ui <popup>");
         return Ok(());
     }
+    if let Command::Hook { agent } = &cli.command {
+        const MAX: usize = 32 * 1024 * 1024;
+        let mut payload = Vec::new(); std::io::stdin().take(MAX as u64 + 1).read_to_end(&mut payload)?;
+        // Some agents (Cursor) block on missing/invalid stdout, so the protocol reply goes out before anything can fail.
+        if let Some(reply) = agents::find(agent).and_then(|spec| spec.reply) {
+            let mut out = std::io::stdout(); out.write_all(reply(&payload).as_bytes())?; out.flush()?;
+        }
+        if payload.len() > MAX { return Err("hook payload too large".into()); }
+        let paths = Paths::resolve(cli.state_dir, cli.config_dir)?;
+        return hook(&paths, agent, &payload);
+    }
     let paths = Paths::resolve(cli.state_dir, cli.config_dir)?;
     match cli.command {
-        Command::Hook { agent } => {
-            if !gate::from_env(&paths.state) || (agent == "omp" && std::env::var("OMPCODE").ok().as_deref() == Some("1")) { return Ok(()); }
-            let mut payload = Vec::new(); std::io::stdin().take(32*1024*1024+1).read_to_end(&mut payload)?;
-            if payload.len() > 32*1024*1024 { return Err("hook payload too large".into()); }
-            let config = config::Config::load(&paths.config)?;
-            let proxy = std::env::var("HERDR_RESPAN_PROXY").ok().as_deref() == Some("1") || ["ANTHROPIC_BASE_URL","OPENAI_BASE_URL","OPENAI_API_BASE","GOOGLE_GEMINI_BASE_URL"].iter().any(|key| std::env::var(key).is_ok_and(|url| url.contains("api.respan.ai")));
-            let spec = agents::find(&agent).ok_or("adapter not installed")?;
-            let mut ctx = record::HookCtx::new(paths.clone(), config, &agent, meta::collect(&std::env::current_dir()?), std::env::var("HERDR_RESPAN_RUN_ID").ok(), proxy)?;
-            let result = (spec.hook)(&mut ctx, &payload);
-            ctx.finish()?;
-            if !cfg!(test) { spool::spawn_flush(&paths)?; }
-            result
-        }
+        Command::Hook { .. } => unreachable!(),
         Command::Lifecycle => {
             if !gate::allowed(&paths.state,std::env::var("HERDR_ENV").ok().as_deref(),std::env::var("HERDR_RESPAN").ok().as_deref(),None) { return Ok(()); }
             let event = std::env::var("HERDR_PLUGIN_EVENT_JSON")?;
@@ -122,6 +121,17 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Ui { args } => ui::popup(&paths, &config::Config::load(&paths.config)?, &args),
         Command::Help => unreachable!(),
     }
+}
+fn hook(paths: &Paths, agent: &str, payload: &[u8]) -> Result<()> {
+    if !gate::from_env(&paths.state) || (agent == "omp" && std::env::var("OMPCODE").ok().as_deref() == Some("1")) { return Ok(()); }
+    let config = config::Config::load(&paths.config)?;
+    let proxy = std::env::var("HERDR_RESPAN_PROXY").ok().as_deref() == Some("1") || ["ANTHROPIC_BASE_URL","OPENAI_BASE_URL","OPENAI_API_BASE","GOOGLE_GEMINI_BASE_URL"].iter().any(|key| std::env::var(key).is_ok_and(|url| url.contains("api.respan.ai")));
+    let spec = agents::find(agent).ok_or("adapter not installed")?;
+    let mut ctx = record::HookCtx::new(paths.clone(), config, agent, meta::collect(&std::env::current_dir()?), std::env::var("HERDR_RESPAN_RUN_ID").ok(), proxy)?;
+    let result = (spec.hook)(&mut ctx, payload);
+    ctx.finish()?;
+    if !cfg!(test) { spool::spawn_flush(paths)?; }
+    result
 }
 fn select(names: &[String], all: bool) -> Result<Vec<&'static agents::AgentSpec>> {
     if all { if agents::AGENTS.is_empty() { return Err("no adapters built yet".into()); } return Ok(agents::AGENTS.iter().collect()); }

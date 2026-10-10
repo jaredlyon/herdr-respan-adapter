@@ -8,7 +8,9 @@ fn records(tmp:&crate::tests::Temp)->Vec<SpanRecord> {
     crate::spool::ready(&tmp.path.join("state")).unwrap().iter().flat_map(|path|std::fs::read_to_string(path).unwrap().lines().map(|line|serde_json::from_str(line).unwrap()).collect::<Vec<_>>()).collect()
 }
 fn payloads(tmp:&crate::tests::Temp)->Vec<Value> {
-    serde_json::from_str(&include_str!("fixtures/hooks.json").replace("$TRANSCRIPT",&tmp.path.join("main.jsonl").to_string_lossy()).replace("$CHILD",&tmp.path.join("child.jsonl").to_string_lossy())).unwrap()
+    let transcript=serde_json::to_string(&tmp.path.join("main.jsonl").to_string_lossy()).unwrap();
+    let child=serde_json::to_string(&tmp.path.join("child.jsonl").to_string_lossy()).unwrap();
+    serde_json::from_str(&include_str!("fixtures/hooks.json").replace("\"$TRANSCRIPT\"",&transcript).replace("\"$CHILD\"",&child)).unwrap()
 }
 fn send(ctx:&mut HookCtx,payload:&Value) {hook(ctx,&serde_json::to_vec(payload).unwrap()).unwrap();}
 fn settle_now(ctx:&mut HookCtx) {

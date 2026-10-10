@@ -49,6 +49,7 @@ pub fn enforce_cap(state: &Path, max: u64) -> Result<()> {
     Ok(())
 }
 pub fn dropped(state: &Path) -> u64 { fs::read(state.join("dropped.jsonl")).map(|b| b.iter().filter(|&&c| c == b'\n').count() as u64).unwrap_or(0) }
+/// Closed-file owner-token lock. Windows sharing violations count as a held lock.
 pub struct Lock { path: PathBuf, token: String }
 impl Lock {
     pub fn acquire(state: &Path) -> Result<Option<Self>> {
@@ -62,13 +63,17 @@ impl Lock {
         let mut file = match open() {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale=match path.metadata() {Ok(m)=>m.modified()?.elapsed().unwrap_or_default()>stale_after,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(e)=>return Err(e.into())};
+                let stale=match path.metadata() {Ok(m)=>m.modified()?.elapsed().unwrap_or_default()>stale_after,Err(e) if matches!(e.kind(),std::io::ErrorKind::NotFound|std::io::ErrorKind::PermissionDenied)=>return Ok(None),Err(e)=>return Err(e.into())};
                 if !stale { return Ok(None); }
-                let _ = fs::remove_file(path);
-                match open() { Ok(f) => f, Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None), Err(e) => return Err(e.into()) }
-            }, Err(e) => return Err(e.into()),
+                match fs::remove_file(path) {
+                    Ok(()) => {},
+                    Err(e) if matches!(e.kind(),std::io::ErrorKind::NotFound|std::io::ErrorKind::PermissionDenied) => return Ok(None),
+                    Err(e) => return Err(e.into()),
+                }
+                match open() { Ok(f) => f, Err(e) if matches!(e.kind(),std::io::ErrorKind::AlreadyExists|std::io::ErrorKind::PermissionDenied) => return Ok(None), Err(e) => return Err(e.into()) }
+            }, Err(e) if e.kind()==std::io::ErrorKind::PermissionDenied => return Ok(None), Err(e) => return Err(e.into()),
         };
-        let token = format!("{}-{}", std::process::id(), now_ns()); file.write_all(token.as_bytes())?;
+        let token = format!("{}-{}", std::process::id(), now_ns()); file.write_all(token.as_bytes())?;drop(file); // No open handle prevents Windows reclamation.
         Ok(Some(Self { path:path.into(), token }))
     }
     pub fn refresh(&self) -> Result<()> { crate::paths::write_private(&self.path, self.token.as_bytes()) }
@@ -113,8 +118,17 @@ fn detached(cmd: &mut Command) {
     }
     #[test] fn stale_sender_lock_is_reclaimed() {
         let tmp=crate::tests::Temp::new();let first=Lock::acquire(&tmp.path).unwrap().unwrap();let path=tmp.path.join("spool/flush.lock");
-        let file=File::open(&path).unwrap();file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(61))).unwrap();
+        let file=OpenOptions::new().write(true).open(&path).unwrap();file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(61))).unwrap();drop(file);
         let second=Lock::acquire(&tmp.path).unwrap().unwrap();drop(first);assert!(path.exists());assert!(Lock::acquire(&tmp.path).unwrap().is_none());drop(second);assert!(!path.exists());
+    }
+    #[cfg(windows)]
+    #[test] fn stale_lock_with_exclusive_handle_is_held_until_closed() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let tmp=crate::tests::Temp::new();let first=Lock::acquire(&tmp.path).unwrap().unwrap();let path=tmp.path.join("spool/flush.lock");
+        let file=OpenOptions::new().write(true).share_mode(0).open(&path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(61))).unwrap();
+        assert!(Lock::acquire(&tmp.path).unwrap().is_none());drop(file);
+        let second=Lock::acquire(&tmp.path).unwrap().unwrap();drop(first);assert!(path.exists());drop(second);assert!(!path.exists());
     }
     #[test] fn settlement_markers_trigger_only_registered_settlers() {
         fn hook(_: &mut crate::record::HookCtx,_:&[u8])->Result<()> {Ok(())}

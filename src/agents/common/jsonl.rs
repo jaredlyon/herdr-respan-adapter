@@ -6,7 +6,7 @@ pub struct Cursor { pub offset: u64, pub len_seen: u64, #[serde(default)] pub id
 pub fn read_new(path: &Path, cursor: &mut Cursor) -> Result<Vec<String>> {
     let mut next=cursor.clone();
     let mut file=std::fs::File::open(path)?;let metadata=file.metadata()?;let len=metadata.len();
-    let identity=identity(&metadata);
+    let identity=identity(&mut file,&metadata)?;
     if len<next.len_seen || next.offset>len || next.identity!=identity { next.offset=0; }
     next.identity=identity;
     file.seek(SeekFrom::Start(next.offset))?;let mut reader=BufReader::new(file);let mut lines=Vec::new();
@@ -18,9 +18,18 @@ pub fn read_new(path: &Path, cursor: &mut Cursor) -> Result<Vec<String>> {
     }
     next.len_seen=len;*cursor=next;Ok(lines)
 }
-fn identity(metadata:&std::fs::Metadata)->Option<String> {
-    #[cfg(unix)] {use std::os::unix::fs::MetadataExt;Some(format!("{}:{}",metadata.dev(),metadata.ino()))}
-    #[cfg(not(unix))] {metadata.created().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_nanos().to_string())}
+fn identity(_file:&mut std::fs::File,metadata:&std::fs::Metadata)->Result<Option<String>> {
+    #[cfg(unix)] {use std::os::unix::fs::MetadataExt;Ok(Some(format!("{}:{}",metadata.dev(),metadata.ino())))}
+    #[cfg(not(unix))] {
+        use sha2::{Digest,Sha256};
+        let created=metadata.created().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_nanos().to_string()).unwrap_or_default();
+        // NTFS tunneling can preserve creation time on replacement. Fingerprint only
+        // a complete first line or 256 bytes, so normal appends never change identity.
+        let mut bytes=[0;256];let count=metadata.len().min(bytes.len() as u64) as usize;
+        _file.seek(SeekFrom::Start(0))?;_file.read_exact(&mut bytes[..count])?;
+        let end=bytes[..count].iter().position(|&b|b==b'\n').map(|i|i+1).unwrap_or(if count==bytes.len() {count} else {0});
+        Ok(Some(format!("{created}:{:x}",Sha256::digest(&bytes[..end]))))
+    }
 }
 /// Skip existing complete records, retaining an incomplete tail for the next read_new call.
 /// Reads backwards in bounded chunks, stopping at the final newline.
@@ -33,7 +42,7 @@ pub fn at_end(path:&Path)->Result<Cursor> {
         if let Some(newline)=bytes[..count].iter().rposition(|&b|b==b'\n') {offset=start+newline as u64+1;break;}
         end=start;
     }
-    Ok(Cursor {offset,len_seen:len,identity:identity(&metadata)})
+    Ok(Cursor {offset,len_seen:len,identity:identity(&mut file,&metadata)?})
 }
 
 #[cfg(test)] mod tests {
@@ -48,6 +57,18 @@ pub fn at_end(path:&Path)->Result<Cursor> {
         let tmp=crate::tests::Temp::new();let path=tmp.path.join("events.jsonl");let replacement=tmp.path.join("replacement");std::fs::write(&path,b"old\n").unwrap();let mut cursor=Cursor::default();read_new(&path,&mut cursor).unwrap();
         std::fs::write(&replacement,b"new-longer\n").unwrap();std::fs::rename(replacement,&path).unwrap();assert_eq!(read_new(&path,&mut cursor).unwrap(),vec!["new-longer"]);
     }
+    #[cfg(windows)]
+    #[test] fn tunneled_creation_time_and_append_keep_correct_cursor() {
+        use std::{io::Write,os::windows::fs::FileTimesExt};
+        let tmp=crate::tests::Temp::new();let path=tmp.path.join("events.jsonl");
+        std::fs::write(&path,b"old\n").unwrap();let created=std::fs::metadata(&path).unwrap().created().unwrap();let mut cursor=Cursor::default();
+        assert_eq!(read_new(&path,&mut cursor).unwrap(),vec!["old"]);
+        let mut file=std::fs::OpenOptions::new().append(true).open(&path).unwrap();file.write_all(b"append\n").unwrap();drop(file);
+        assert_eq!(read_new(&path,&mut cursor).unwrap(),vec!["append"]);
+        std::fs::remove_file(&path).unwrap();std::fs::write(&path,b"new\nreplacement\n").unwrap();
+        let file=std::fs::OpenOptions::new().write(true).open(&path).unwrap();file.set_times(std::fs::FileTimes::new().set_created(created)).unwrap();drop(file);
+        assert_eq!(read_new(&path,&mut cursor).unwrap(),vec!["new","replacement"]);
+    }
     #[test] fn invalid_complete_utf8_does_not_advance_cursor() {
         let tmp=crate::tests::Temp::new();let path=tmp.path.join("events.jsonl");std::fs::write(&path,b"good\n\xff\n").unwrap();let mut cursor=Cursor::default();assert!(read_new(&path,&mut cursor).is_err());assert_eq!(cursor.offset,0);
     }
@@ -55,7 +76,7 @@ pub fn at_end(path:&Path)->Result<Cursor> {
         use std::io::Write;
         let tmp=crate::tests::Temp::new();let path=tmp.path.join("events.jsonl");let missing=at_end(&path).unwrap();assert_eq!(missing.offset,0);assert_eq!(missing.len_seen,0);assert!(missing.identity.is_none());
         for (bytes,expected) in [(b"".as_slice(),0),(b"partial".as_slice(),0),(b"first\nsecond\n".as_slice(),13),(b"first\nsecond\npartial".as_slice(),13)] {
-            std::fs::write(&path,bytes).unwrap();let cursor=at_end(&path).unwrap();assert_eq!(cursor.offset,expected);assert_eq!(cursor.len_seen,bytes.len() as u64);assert_eq!(cursor.identity,identity(&std::fs::metadata(&path).unwrap()));
+            std::fs::write(&path,bytes).unwrap();let cursor=at_end(&path).unwrap();assert_eq!(cursor.offset,expected);assert_eq!(cursor.len_seen,bytes.len() as u64);assert_eq!(cursor.identity,identity(&mut std::fs::File::open(&path).unwrap(),&std::fs::metadata(&path).unwrap()).unwrap());
         }
         let mut bytes=vec![b'x';100_000];bytes.extend_from_slice(b"\npartial");std::fs::write(&path,&bytes).unwrap();let mut cursor=at_end(&path).unwrap();assert_eq!(cursor.offset,100_001);
         let mut file=std::fs::OpenOptions::new().append(true).open(&path).unwrap();file.write_all(b"-finish\n").unwrap();drop(file);assert_eq!(read_new(&path,&mut cursor).unwrap(),vec!["partial-finish"]);

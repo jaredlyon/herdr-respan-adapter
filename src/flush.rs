@@ -190,6 +190,7 @@ fn month(seconds: u64) -> String {
                         Err(e) => panic!("mock accept: {e}"),
                     }
                 };
+                stream.set_nonblocking(false).unwrap(); // Windows accepts inherit the listener mode.
                 stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let mut reader = BufReader::new(stream.try_clone().unwrap()); let mut headers = String::new(); let mut length=0;
                 loop { let mut line=String::new(); reader.read_line(&mut line).unwrap();

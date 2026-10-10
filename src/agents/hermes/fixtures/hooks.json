@@ -1,0 +1,17 @@
+[
+  ["pre_llm_call", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","user_message":"Inspect the example repository"}],
+  ["pre_api_request", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","api_request_id":"request-1","started_at":1,"request":{"method":"POST","body":{"messages":[{"role":"user","content":"Inspect the example repository"}],"system":"Be concise"}}}],
+  ["post_api_request", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","api_request_id":"request-1","started_at":1,"ended_at":1,"model":"example-model","provider":"example-provider","response":{"assistant_message":{"role":"assistant","content":"I will inspect it"}},"usage":{"input_tokens":11,"prompt_tokens":19,"output_tokens":7,"cache_read_tokens":5,"cache_write_tokens":3,"reasoning_tokens":2}}],
+  ["api_request_error", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","api_request_id":"failed-request","started_at":1,"ended_at":1,"model":"example-model","provider":"example-provider","error":{"type":"TimeoutError","message":"synthetic timeout"},"request":{"method":"POST","body":{"messages":[{"role":"user","content":"retry example"}]}}}],
+  ["pre_auxiliary_call", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","api_request_id":"aux-request","aux_task":"title","started_at":1,"request":{"method":"POST","body":{"messages":[{"role":"user","content":"Give this turn a title"}]}}}],
+  ["post_auxiliary_call", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","api_request_id":"aux-request","aux_task":"title","started_at":1,"ended_at":1,"model":"example-small","provider":"example-provider","response":{"assistant_message":{"role":"assistant","content":"Repository inspection"},"usage":null},"usage":{"input_tokens":3,"output_tokens":2,"prompt_tokens":3,"cache_read_tokens":0,"cache_write_tokens":0,"reasoning_tokens":0}}],
+  ["pre_tool_call", {"session_id":"parent-session","turn_id":"turn-1","tool_call_id":"delegate-1","tool_name":"delegate_task","args":{"goal":"Inspect examples"}}],
+  ["subagent_start", {"parent_session_id":"parent-session","parent_turn_id":"turn-1","child_session_id":"child-session","child_subagent_id":"child-1","child_role":"explore","child_goal":"Inspect examples"}],
+  ["pre_llm_call", {"session_id":"child-session","turn_id":"child-turn","platform":"subagent","user_message":"Inspect examples"}],
+  ["post_api_request", {"session_id":"child-session","turn_id":"child-turn","platform":"subagent","api_request_id":"child-request","started_at":1,"ended_at":1,"model":"example-model","provider":"example-provider","response":{"assistant_message":{"role":"assistant","content":"Two examples"}},"usage":null}],
+  ["on_session_end", {"session_id":"child-session","turn_id":"child-turn","platform":"subagent","completed":true}],
+  ["subagent_stop", {"parent_session_id":"parent-session","parent_turn_id":"turn-1","child_session_id":"child-session","child_summary":"Two examples","child_status":"ok"}],
+  ["post_tool_call", {"session_id":"parent-session","turn_id":"turn-1","tool_call_id":"delegate-1","tool_name":"delegate_task","args":{"goal":"Inspect examples"},"result":"Two examples","duration_ms":0,"status":"ok"}],
+  ["post_llm_call", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","assistant_response":"Found two examples"}],
+  ["on_session_end", {"session_id":"parent-session","turn_id":"turn-1","platform":"cli","completed":true,"interrupted":false}]
+]

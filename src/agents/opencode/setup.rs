@@ -10,8 +10,7 @@ const PROPERTY_END: &str = "/* herdr-respan property end */";
 const CREATED: &str = "// herdr-respan created config\n";
 
 pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
-    // Match herdr's opencode_dir(): it intentionally does not use XDG_CONFIG_HOME.
-    let dir = ctx.project.as_ref().map_or_else(|| ctx.home.join(".config/opencode"), |p| p.join(".opencode"));
+    let dir = config_dir(ctx, std::env::var_os("OPENCODE_CONFIG_DIR"));
     let render = |asset: &str| -> Result<Vec<u8>> {
         Ok(asset.replace("__HERDR_RESPAN_BIN__", &serde_json::to_string(&ctx.binary.to_string_lossy())?)
             .replace("__HERDR_RESPAN_STATE__", &serde_json::to_string(&ctx.state_dir.to_string_lossy())?)
@@ -37,6 +36,13 @@ pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
     }
     plan.notices.push("OpenCode V1 requires >= 1.18.29; V2 TUI API follows herdr integration v13 (beta 19242). Restart OpenCode after setup. Local plugin files auto-load: no opencode.json plugin entry is added.".into());
     Ok(plan)
+}
+
+fn config_dir(ctx: &SetupCtx, override_dir: Option<std::ffi::OsString>) -> PathBuf {
+    ctx.project.as_ref().map_or_else(
+        || override_dir.filter(|v| !v.is_empty()).map(PathBuf::from)
+            .unwrap_or_else(|| ctx.home.join(".config/opencode")),
+        |p| p.join(".opencode"))
 }
 
 fn add_tui(text: &str) -> Result<String> { add_registration(text, "plugin", TUI) }
@@ -186,6 +192,18 @@ fn finish_removal(mut output: String) -> Result<String> {
 mod tests {
     use super::*;
     use crate::{paths::Paths, setup};
+
+    #[test]
+    fn native_config_relocation_and_project_precedence() {
+        let tmp = crate::tests::Temp::new();
+        let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
+        let ctx = SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
+        let relocated = tmp.path.join("isolated-agent");
+        assert_eq!(config_dir(&ctx, Some(relocated.clone().into_os_string())), relocated);
+        assert_eq!(config_dir(&ctx, Some("".into())), ctx.home.join(".config/opencode"));
+        let project = SetupCtx::new(&paths, ctx.home.clone(), Some(tmp.path.join("repo"))).unwrap();
+        assert_eq!(config_dir(&project, Some(relocated.into_os_string())), tmp.path.join("repo/.opencode"));
+    }
 
     #[test]
     fn jsonc_registration_preserves_comments_strings_and_foreign_entries() {

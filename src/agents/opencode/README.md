@@ -16,7 +16,7 @@ The server entrypoint deliberately handles **only local V1 run/Mini**, with root
 
 ## Setup and removal
 
-Global setup uses `~/.config/opencode`, exactly matching herdr's installer (no OpenCode relocation variable is used by herdr). `--project <dir>` uses `<dir>/.opencode`.
+Global setup honors `OPENCODE_CONFIG_DIR`, otherwise uses `~/.config/opencode`. This follows the installed agent's native config relocation; XDG directories separately relocate state/cache. `--project <dir>` uses `<dir>/.opencode`.
 
 Owned assets:
 

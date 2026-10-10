@@ -17,6 +17,14 @@ sha2 = "0.10"
 getrandom = "0.2"
 regex = "1"
 similar = "2"
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "time"] }
+hyper = { version = "1", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "webpki-roots", "tls12"] }
+
+[dev-dependencies]
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [profile.release]
 opt-level = "z"

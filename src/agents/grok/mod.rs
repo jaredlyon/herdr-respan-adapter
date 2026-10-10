@@ -6,7 +6,7 @@ use crate::{agents::{AgentSpec, common::{bridge::{self, Batch, Event}, jsonl::{s
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
 pub const SPEC: AgentSpec = AgentSpec {
     kind: "grok", display: "Grok Build", hook, plan: setup::plan, reply: None, settle: Some(settle),
@@ -19,6 +19,8 @@ struct State {
     chats: u64, final_output: Option<Value>,
     transcript: Option<PathBuf>, cursor: Cursor,
     tools: BTreeMap<String, u64>, subs: BTreeMap<String, Sub>, parents: BTreeMap<String, String>,
+    #[serde(default)] context: Option<NativeContext>,
+    #[serde(skip)] observed_tail: Option<Cursor>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Sub {
@@ -45,50 +47,130 @@ fn hook(ctx: &mut HookCtx, stdin: &[u8]) -> Result<()> {
     if !identity(&payload, session_env.as_deref(), event_env.as_deref()) { return Ok(()); }
     let session = text(&payload, "sessionId").ok_or("missing Grok session")?;
     let key = format!("native-{}.json", digest(session.as_bytes()));
-    let _lock = ctx.lock(&format!("{key}.lock"))?;
-    let mut state: State = ctx.load(&key)?;
     let now = timestamp(text(&payload, "timestamp").unwrap_or_default()).unwrap_or_else(|| ctx.now_ns());
     let duplicate_models = ctx.proxy_active || ["GROK_MODELS_BASE_URL", "GROK_XAI_API_BASE_URL", "GROK_CLI_CHAT_PROXY_BASE_URL"]
         .iter().any(|name| std::env::var(name).is_ok_and(|url| url.contains("api.respan.ai")));
-    let batch = normalize(&payload, &mut state, now, duplicate_models)?;
-    bridge::ingest(ctx, batch)?;
-    save_state(ctx, &key, &mut state)?;
-    if state.settle_left > 0 { ctx.mark_settle_pending()?; }
+    // Snapshot the observed transcript tail before a contended hook is deferred.
+    let baseline = text(&payload, "transcriptPath").map(|path|jsonl::at_end(&Path::new(path).with_file_name("chat_history.jsonl"))).transpose()?;
+    let spawn = spawn_child(&payload).and_then(|child|text(&payload,"toolUseId").map(|tool|(tool.to_owned(),child.to_owned())));
+    let mut payload = payload;
+    // Grok also sends Claude/Cursor aliases; unused fields are not needed for replay.
+    payload.as_object_mut().expect("validated payload").retain(|name, _| [
+        "sessionId", "hookEventName", "workspaceRoot", "timestamp", "cwd", "transcriptPath", "promptId",
+        "prompt", "toolUseId", "toolName", "durationMs", "toolInput", "toolResult", "toolInputTruncated",
+        "toolResultTruncated", "error", "subagentId", "subagentType", "phase", "lastAssistantMessage", "reason", "errorDetails"
+    ].contains(&name.as_str()));
+    for name in ["prompt", "toolInput", "toolResult", "lastAssistantMessage", "error", "errorDetails"] {
+        if let Some(field) = payload.get_mut(name) {
+            let mut content = Some(std::mem::take(field));
+            ctx.scrub_content(&mut content)?;
+            *field = content.unwrap_or(Value::Null);
+        }
+    }
+    let name = format!("queue-{key}-{:020}-{}.json", ctx.now_ns(), crate::record::random_id()?);
+    let context = NativeContext {metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active};
+    ctx.save(&name, &Queued {key:key.clone(),payload,now,duplicate_models,baseline,spawn,context})?;
+    ctx.mark_settle_pending()?;
+    let Some(_lock) = ctx.try_lock(&format!("{key}.lock"))? else {return Ok(());};
+    drain(ctx, &key)
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct NativeContext {metadata:BTreeMap<String,Value>,run_id:Option<String>,proxy_active:bool}
+#[derive(Default, Serialize, Deserialize)]
+struct Queued {
+    key:String,payload:Value,now:u64,duplicate_models:bool,baseline:Option<Cursor>,
+    spawn:Option<(String,String)>,context:NativeContext,
+}
+fn queued(ctx: &HookCtx, key: Option<&str>) -> Result<Vec<PathBuf>> {
+    let prefix = key.map_or_else(|| "queue-".into(), |key|format!("queue-{key}-"));
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(ctx.state_dir())? {
+        let path = entry?.path();
+        if path.file_name().is_some_and(|n|n.to_string_lossy().starts_with(&prefix)) && path.extension().is_some_and(|e|e=="json") {files.push(path);}
+    }
+    files.sort();
+    Ok(files)
+}
+fn drain(ctx: &mut HookCtx, key: &str) -> Result<()> {
+    for file in queued(ctx, Some(key))? {
+        let queued: Queued = ctx.load(file.file_name().and_then(|n|n.to_str()).ok_or("invalid queue filename")?)?;
+        let mut state: State = ctx.load(key)?;
+        state.context=Some(queued.context.clone());state.observed_tail=queued.baseline;
+        if let Some((tool,child)) = queued.spawn {state.parents.insert(child,tool);}
+        let metadata = std::mem::replace(&mut ctx.metadata, queued.context.metadata);
+        let run_id = std::mem::replace(&mut ctx.run_id, queued.context.run_id);
+        let proxy = std::mem::replace(&mut ctx.proxy_active, queued.context.proxy_active);
+        let result = (|| -> Result<()> {
+            let batch = normalize(&queued.payload, &mut state, queued.now, queued.duplicate_models)?;
+            bridge::ingest(ctx, batch)?;
+            save_state(ctx, key, &mut state)?;
+            if state.settle_left>0 {ctx.mark_settle_pending()?;}
+            Ok(())
+        })();
+        ctx.metadata=metadata;ctx.run_id=run_id;ctx.proxy_active=proxy;
+        result?;
+        std::fs::remove_file(file)?;
+    }
     Ok(())
 }
 
 
 fn save_state(ctx: &HookCtx, key: &str, state: &mut State) -> Result<()> {
-    if ctx.config.content_cap_bytes == 0 {
-        state.input.clear();
-        if let Some(output) = &mut state.final_output { *output = Value::Null; }
-        for sub in state.subs.values_mut() { sub.output = None; }
-    }
+    let mut input = Some(Value::Array(std::mem::take(&mut state.input)));
+    ctx.scrub_content(&mut input)?;
+    state.input = match input {Some(Value::Array(values))=>values,Some(value)=>vec![value],None=>Vec::new()};
+    let had_output = state.final_output.is_some();
+    ctx.scrub_content(&mut state.final_output)?;
+    // Keep the presence of a final callback so metadata-only mode still emits its chat.
+    if had_output && state.final_output.is_none() {state.final_output=Some(Value::Null);}
+    for sub in state.subs.values_mut() {ctx.scrub_content(&mut sub.output)?;}
     ctx.save(key, state)
 }
 
 fn settle(ctx: &mut HookCtx) -> Result<bool> {
-    let mut pending = false;
+    let mut keys = BTreeSet::new();
     for entry in std::fs::read_dir(ctx.state_dir())? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.starts_with("native-") || !name.ends_with(".json") { continue; }
-        let _lock = ctx.lock(&format!("{name}.lock"))?;
-        let mut state: State = ctx.load(&name)?;
-        if state.settle_left == 0 { continue; }
-        let mut events = Vec::new();
-        transcript(&mut state, ctx.now_ns(), false, &mut events)?;
-        state.settle_left -= 1;
-        if state.settle_left == 0 { fallback_chat(&mut state, ctx.now_ns(), &mut events); }
-        if !events.is_empty() {
-            bridge::ingest(ctx, Batch { v: 1, agent: "grok".into(), session_id: state.session.clone(),
-                session_path: state.transcript.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                cwd: state.cwd.clone(), agent_version: None, events })?;
-        }
-        pending |= state.settle_left != 0;
-        save_state(ctx, &name, &mut state)?;
+        let name = entry?.file_name().to_string_lossy().into_owned();
+        if name.starts_with("native-") && name.ends_with(".json") {keys.insert(name);}
     }
-    Ok(pending)
+    for file in queued(ctx, None)? {
+        // A synchronous drainer may remove this snapshot before settlement acquires its lock.
+        let queued: Queued = match std::fs::read(&file) {
+            Ok(bytes)=>serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>continue,
+            Err(e)=>return Err(e.into()),
+        };
+        keys.insert(queued.key);
+    }
+    let mut pending = false;
+    for name in keys {
+        let _lock = ctx.lock(&format!("{name}.lock"))?;
+        drain(ctx, &name)?;
+        let mut state: State = ctx.load(&name)?;
+        if state.settle_left == 0 {continue;}
+        let context = state.context.clone().unwrap_or_else(|| NativeContext {metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active});
+        let metadata = std::mem::replace(&mut ctx.metadata, context.metadata);
+        let run_id = std::mem::replace(&mut ctx.run_id, context.run_id);
+        let proxy = std::mem::replace(&mut ctx.proxy_active, context.proxy_active);
+        let result = (|| -> Result<()> {
+            let mut events = Vec::new();
+            let duplicate_models = state.proxy;
+            transcript(&mut state, ctx.now_ns(), duplicate_models, &mut events)?;
+            state.settle_left -= 1;
+            if state.settle_left == 0 {fallback_chat(&mut state, ctx.now_ns(), &mut events);}
+            if !events.is_empty() {
+                bridge::ingest(ctx, Batch {v:1,agent:"grok".into(),session_id:state.session.clone(),
+                    session_path:state.transcript.as_ref().map(|p|p.to_string_lossy().into_owned()),
+                    cwd:state.cwd.clone(),agent_version:None,events})?;
+            }
+            pending |= state.settle_left != 0;
+            save_state(ctx, &name, &mut state)
+        })();
+        ctx.metadata=metadata;ctx.run_id=run_id;ctx.proxy_active=proxy;
+        result?;
+    }
+    Ok(pending || !queued(ctx, None)?.is_empty())
 }
 
 fn normalize(v: &Value, state: &mut State, now: u64, proxy: bool) -> Result<Batch> {
@@ -207,16 +289,20 @@ fn fallback_chat(state: &mut State, now: u64, events: &mut Vec<Event>) {
     state.chats += 1;
 }
 
+fn spawn_child(v: &Value) -> Option<&str> {
+    if !matches!(text(v, "toolName"), Some("task" | "Task" | "spawn_subagent")) {return None;}
+    let result = v.get("toolResult").and_then(|r|r.get("output")).or_else(||v.get("toolResult"));
+    v.pointer("/toolInput/task_id").and_then(Value::as_str)
+        .or_else(||result.and_then(|r|text(r,"subagent_id")))
+        .or_else(||result.and_then(|r|text(r,"task_id")))
+        .filter(|s|!s.is_empty())
+}
 fn bind_spawn(v: &Value, tool: &str, state: &mut State) {
-    if !matches!(text(v, "toolName"), Some("task" | "Task" | "spawn_subagent")) { return; }
-    let result = v.get("toolResult").and_then(|r| r.get("output")).or_else(|| v.get("toolResult"));
-    let child = v.pointer("/toolInput/task_id").and_then(Value::as_str)
-        .or_else(|| result.and_then(|r| text(r, "subagent_id")))
-        .or_else(|| result.and_then(|r| text(r, "task_id")));
-    if let Some(child) = child.filter(|s| !s.is_empty()) { state.parents.insert(child.into(), tool.into()); }
+    if let Some(child) = spawn_child(v) {state.parents.insert(child.into(),tool.into());}
 }
 
 fn baseline(state: &mut State) -> Result<()> {
+    if let Some(cursor) = state.observed_tail.take() {state.cursor=cursor;return Ok(());}
     if let Some(path) = &state.transcript {
         match jsonl::read_new(path, &mut state.cursor) {
             Ok(_) => {}, Err(e) if missing(e.as_ref()) => {}, Err(e) => return Err(e),

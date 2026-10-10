@@ -50,8 +50,14 @@ fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
     if foreign(&payload) { return Ok(()); }
     let Some(session) = string(&payload, "session_id").filter(|s| valid_id(s)) else { return Ok(()); };
     if string(&payload, "hook_event_name").is_none() || string(&payload, "transcript_path").is_none() || string(&payload, "cwd").is_none() { return Ok(()); }
+    let child_relation=payload.get("tool_response").and_then(Value::as_object).map(|object|object.iter().filter(|(key,_)|["agentId","agent_id","outputFile"].contains(&key.as_str())).map(|(key,value)|(key.clone(),value.clone())).collect::<serde_json::Map<_,_>>());
+    let child_type=payload.pointer("/tool_input/subagent_type").cloned();
     for field in ["prompt", "tool_input", "tool_response", "last_assistant_message"] {
         if let Some(value) = payload.get_mut(field) { let mut content = Some(value.take()); ctx.scrub_content(&mut content)?; *value = content.unwrap_or(Value::Null); }
+    }
+    if ctx.config.content_cap_bytes == 0 {
+        if let Some(relation)=child_relation.filter(|object|!object.is_empty()) { payload["tool_response"]=Value::Object(relation); }
+        if let Some(name)=child_type { payload["tool_input"]=json!({"subagent_type":name}); }
     }
     let key = format!("native-{}-{}.json", ctx.now_ns(), crate::record::random_id()?);
     ctx.save(&key, &json!({"session":session,"received":ctx.now_ns(),"payload":payload,"metadata":ctx.metadata,"run_id":ctx.run_id,"proxy_active":ctx.proxy_active}))?;

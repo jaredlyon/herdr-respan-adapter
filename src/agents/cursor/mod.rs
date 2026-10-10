@@ -102,7 +102,12 @@ fn drain(ctx: &mut HookCtx, key: &str) -> Result<()> {
 fn settle(ctx: &mut HookCtx) -> Result<bool> {
     let mut keys = BTreeSet::new();
     for file in queued(ctx, None)? {
-        let queued: Queued = ctx.load(file.file_name().and_then(|n|n.to_str()).ok_or("invalid queue filename")?)?;
+        // A synchronous drainer may remove this snapshot before settlement acquires its lock.
+        let queued: Queued = match std::fs::read(&file) {
+            Ok(bytes)=>serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>continue,
+            Err(e)=>return Err(e.into()),
+        };
         keys.insert(response_key(&queued.payload));
     }
     for key in keys {
@@ -113,7 +118,7 @@ fn settle(ctx: &mut HookCtx) -> Result<bool> {
 }
 fn process(ctx: &mut HookCtx, payload: &Value, now: u64) -> Result<()> {
     let key = response_key(payload);
-    let event = text(&payload, "hook_event_name").unwrap_or_default();
+    let event = text(payload, "hook_event_name").unwrap_or_default();
     if event == "afterAgentResponse" {
         let mut response = Response { output: payload.get("text").filter(|v| !v.is_null()).cloned() };
         ctx.scrub_content(&mut response.output)?;

@@ -117,7 +117,7 @@ fn process(ctx: &mut HookCtx, mut payload: Value, event_id: String, tool_fingerp
 }
 
 fn tool_fingerprint(payload: &Value) -> Result<String> {
-    Ok(text(payload,"herdr_respan_tool_fingerprint").map(str::to_owned).unwrap_or(digest(&serde_json::to_vec(&payload["tool_input"])?)))
+    if let Some(fingerprint)=text(payload,"herdr_respan_tool_fingerprint") { Ok(fingerprint.into()) } else { Ok(digest(&serde_json::to_vec(&payload["tool_input"])?)) }
 }
 fn next_tool_id(state: &mut State, payload: &Value) -> Result<String> {
     state.tool_sequence = state.tool_sequence.checked_add(1).ok_or("Gemini tool sequence exhausted")?;

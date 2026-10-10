@@ -269,3 +269,75 @@ fn live_mock_hooks_replay_native_and_proxy_without_duplicate_shutdown_chats() {
         assert!(late.is_empty());
     }
 }
+
+#[test]
+fn held_native_lock_queues_without_blocking_and_settle_keeps_native_order() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp,false);
+    ctx.metadata.insert("herdr.pane_id".into(),json!("original-pane"));ctx.run_id=Some("original-run".into());
+    let key=format!("native-{}.json",digest(b"synthetic-session"));let held=ctx.try_lock(&format!("{key}.lock")).unwrap().unwrap();
+    let start=std::time::Instant::now();
+    for (i,mut payload) in fixtures().into_iter().enumerate() {
+        payload["timestamp"]=json!(format!("1970-01-01T00:00:0{i}Z"));
+        hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();
+    }
+    assert!(start.elapsed()<std::time::Duration::from_secs(1));assert_eq!(queued(&ctx,Some(&key)).unwrap().len(),7);
+    assert!(ctx.state_dir().join("settle-pending").exists());assert!(records(&tmp).is_empty());
+    drop(held);ctx.metadata.insert("herdr.pane_id".into(),json!("settler-pane"));ctx.run_id=Some("settler-run".into());ctx.proxy_active=true;
+    assert!(!settle(&mut ctx).unwrap());assert!(queued(&ctx,None).unwrap().is_empty());
+    let all=records(&tmp);assert_eq!(all.len(),4);
+    let tool=all.iter().find(|r|r.log_type=="tool").unwrap();assert_eq!((tool.start_ns,tool.end_ns),(1_000_000_000,5_000_000_000));
+    let sub=all.iter().find(|r|r.span_key.ends_with(":sub:child-1")).unwrap();assert_eq!((sub.start_ns,sub.end_ns),(2_000_000_000,4_000_000_000));
+    assert_eq!(sub.parent_key.as_deref(),Some("grok:synthetic-session:prompt-1:tool:spawn-1"));
+    assert!(all.iter().all(|r|r.run_id.as_deref()==Some("original-run")&&r.metadata["herdr.pane_id"]=="original-pane"));
+    assert_eq!(ctx.run_id.as_deref(),Some("settler-run"));assert!(ctx.proxy_active);assert_eq!(ctx.metadata["herdr.pane_id"],"settler-pane");
+}
+
+#[test]
+fn metadata_only_contended_queue_preserves_spawn_ids_not_content_aliases() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp,false);ctx.config.content_cap_bytes=0;
+    let key=format!("native-{}.json",digest(b"synthetic-session"));let held=ctx.try_lock(&format!("{key}.lock")).unwrap().unwrap();
+    for mut payload in fixtures() {
+        for name in ["prompt","lastAssistantMessage","error","errorDetails","tool_input","tool_response","tool_result","last_assistant_message","input","output","text"] {payload[name]=json!("disk-content-sentinel");}
+        if payload.get("toolInput").is_some() {payload["toolInput"]=json!({"task_id":"child-1","prompt":"disk-content-sentinel"});}
+        if payload.get("toolResult").is_some() {payload["toolResult"]=json!({"output":{"subagent_id":"child-1","output":"disk-content-sentinel"}});}
+        hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();
+    }
+    let files=queued(&ctx,Some(&key)).unwrap();assert_eq!(files.len(),7);
+    for file in files {let saved=std::fs::read_to_string(file).unwrap();assert!(!saved.contains("disk-content-sentinel"));assert!(saved.contains("prompt-1"));}
+    drop(held);assert!(!settle(&mut ctx).unwrap());
+    let all=records(&tmp);assert_eq!(all.len(),4);assert!(all.iter().all(|r|r.input.is_none()&&r.output.is_none()));
+    assert_eq!(all.iter().find(|r|r.span_key.ends_with(":sub:child-1")).unwrap().parent_key.as_deref(),Some("grok:synthetic-session:prompt-1:tool:spawn-1"));
+    fn inspect(path:&Path) {for entry in std::fs::read_dir(path).unwrap() {let path=entry.unwrap().path();if path.is_dir() {inspect(&path);} else {assert!(!String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("disk-content-sentinel"));}}}
+    inspect(&tmp.path.join("state"));
+}
+
+#[test]
+fn queued_tail_settlement_restores_original_context_and_proxy_mode() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp,false);let raw=tmp.path.join("chat_history.jsonl");std::fs::write(&raw,"").unwrap();
+    ctx.metadata.insert("herdr.pane_id".into(),json!("original-pane"));ctx.run_id=Some("original-run".into());
+    let key=format!("native-{}.json",digest(b"synthetic-session"));let held=ctx.try_lock(&format!("{key}.lock")).unwrap().unwrap();
+    let mut prompt=fixtures().remove(0);prompt["transcriptPath"]=json!(tmp.path.join("updates.jsonl"));
+    let mut stop=fixtures().pop().unwrap();stop["transcriptPath"]=prompt["transcriptPath"].clone();
+    for payload in [prompt,stop] {hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();}
+    drop(held);ctx.metadata.clear();ctx.run_id=None;ctx.proxy_active=true;
+    assert!(settle(&mut ctx).unwrap());
+    std::fs::write(&raw,format!("{}\n",json!({"type":"assistant","content":"late","model_id":"grok-build"}))).unwrap();
+    settle(&mut ctx).unwrap();
+    let all=records(&tmp);let chat=all.iter().find(|r|r.log_type=="chat").unwrap();
+    assert_eq!(chat.run_id.as_deref(),Some("original-run"));assert_eq!(chat.metadata["herdr.pane_id"],"original-pane");
+    assert!(ctx.run_id.is_none());assert!(ctx.proxy_active);assert!(ctx.metadata.is_empty());
+}
+
+#[test]
+fn full_content_queue_caps_before_save_without_losing_spawn_identity() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp,false);ctx.config.content_cap_bytes=32;
+    let key=format!("native-{}.json",digest(b"synthetic-session"));let held=ctx.try_lock(&format!("{key}.lock")).unwrap().unwrap();
+    for mut payload in fixtures() {
+        if payload.get("prompt").is_some() {payload["prompt"]=json!("password=queue-secret");}
+        if payload.get("toolResult").is_some() {payload["toolResult"]["output"]["output"]=json!("password=queue-secret ".repeat(100));}
+        hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();
+    }
+    for file in queued(&ctx,Some(&key)).unwrap() {assert!(!std::fs::read_to_string(file).unwrap().contains("queue-secret"));}
+    drop(held);settle(&mut ctx).unwrap();
+    let all=records(&tmp);assert_eq!(all.iter().find(|r|r.span_key.ends_with(":sub:child-1")).unwrap().parent_key.as_deref(),Some("grok:synthetic-session:prompt-1:tool:spawn-1"));
+}

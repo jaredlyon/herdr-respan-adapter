@@ -219,3 +219,40 @@ fn default_config_directory_isolated_from_real_environment() {
         .output().unwrap();
     assert!(result.status.success(), "{:?}", result);
 }
+
+#[test]
+fn held_generation_lock_queues_and_settle_retains_response_and_context() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+    ctx.metadata.insert("herdr.pane_id".into(),json!("original-pane"));ctx.run_id=Some("original-run".into());
+    let key=response_key(&fixtures()[0]);let held=ctx.try_lock(&key).unwrap().unwrap();
+    let start=std::time::Instant::now();
+    for payload in fixtures() {hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();}
+    assert!(start.elapsed()<std::time::Duration::from_secs(1));
+    let files=queued(&ctx,Some(&key)).unwrap();assert_eq!(files.len(),4);
+    assert!(ctx.state_dir().join("settle-pending").exists());assert!(records(&tmp).is_empty());
+    let last:Queued=ctx.load(files.last().unwrap().file_name().unwrap().to_str().unwrap()).unwrap();
+    drop(held);ctx.metadata.insert("herdr.pane_id".into(),json!("settler-pane"));ctx.run_id=Some("settler-run".into());
+    assert!(!settle(&mut ctx).unwrap());assert!(queued(&ctx,None).unwrap().is_empty());
+    let all=records(&tmp);assert_eq!(all.len(),4);
+    let chat=all.iter().find(|r|r.log_type=="chat").unwrap();assert_eq!(chat.output,Some(json!("Synthetic answer")));
+    assert_eq!((chat.start_ns,chat.end_ns),(last.now,last.now));
+    assert_eq!(chat.parent_key.as_deref(),Some("cursor:synthetic-conversation:synthetic-generation:turn"));
+    assert!(all.iter().all(|r|r.run_id.as_deref()==Some("original-run")&&r.metadata["herdr.pane_id"]=="original-pane"));
+    assert_eq!(ctx.run_id.as_deref(),Some("settler-run"));assert_eq!(ctx.metadata["herdr.pane_id"],"settler-pane");
+}
+
+#[test]
+fn metadata_only_contended_queue_omits_response_tool_and_alias_content() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);ctx.config.content_cap_bytes=0;
+    let key=response_key(&fixtures()[0]);let held=ctx.try_lock(&key).unwrap().unwrap();
+    for mut payload in fixtures() {
+        for name in ["tool_input","tool_output","error_message","text","prompt","response","input","output","tool_response"] {payload[name]=json!("disk-content-sentinel");}
+        hook(&mut ctx,&serde_json::to_vec(&payload).unwrap()).unwrap();
+    }
+    let files=queued(&ctx,Some(&key)).unwrap();assert_eq!(files.len(),4);
+    for file in files {let saved=std::fs::read_to_string(file).unwrap();assert!(!saved.contains("disk-content-sentinel"));assert!(saved.contains("synthetic-generation"));}
+    drop(held);assert!(!settle(&mut ctx).unwrap());
+    let all=records(&tmp);assert_eq!(all.len(),4);assert!(all.iter().all(|r|r.input.is_none()&&r.output.is_none()));
+    fn inspect(path:&std::path::Path) {for entry in std::fs::read_dir(path).unwrap() {let path=entry.unwrap().path();if path.is_dir() {inspect(&path);} else {assert!(!String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("disk-content-sentinel"));}}}
+    inspect(&tmp.path.join("state"));
+}

@@ -4,7 +4,7 @@ mod setup;
 use crate::{agents::{common::{bridge::{self, Batch, Event}, jsonl::{self, Cursor}}, AgentSpec}, record::{HookCtx, Usage}, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::{Path, PathBuf}};
+use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
 pub const SPEC: AgentSpec = AgentSpec {
     kind: "kimi", display: "Kimi Code CLI", hook, plan: setup::plan, reply: None, settle: Some(settle),
@@ -16,12 +16,12 @@ struct Session {
     metadata: BTreeMap<String, Value>, run_id: Option<String>, proxy_active: bool,
     cwd: String, home: Option<PathBuf>, wire: Option<PathBuf>, cursor: Cursor, baseline_ns: u64, backlog: Vec<Value>,
     turn: Option<String>, ended: bool, model: Option<String>, provider: Option<String>,
-    steps: BTreeMap<String, Step>, tools: BTreeMap<String, Tool>, done: BTreeMap<String, Pending>, output: Option<Value>,
+    steps: BTreeMap<String, Step>, tools: BTreeMap<String, Tool>, #[serde(default)] completed_tools: BTreeSet<String>, done: BTreeMap<String, Pending>, output: Option<Value>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Step { start: u64, output: Vec<Value>, output_bytes: usize }
 #[derive(Default, Serialize, Deserialize)]
-struct Tool { identified: bool, start: u64 }
+struct Tool { identified: bool, start: u64, #[serde(default)] name: Option<String>, #[serde(default)] input: Option<Value> }
 #[derive(Default, Serialize, Deserialize)]
 struct Pending { payload: Value, ts: u64, home: Option<PathBuf>, metadata: BTreeMap<String, Value>, run_id: Option<String>, proxy_active: bool }
 fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> { v.get(key)?.as_str().filter(|s| !s.is_empty()) }
@@ -57,12 +57,19 @@ fn scrub_payload(ctx: &HookCtx, payload: &mut Value) -> Result<()> {
 fn save_state(ctx: &HookCtx, state: &mut State) -> Result<()> {
     for session in state.sessions.values_mut() {
         ctx.scrub_content(&mut session.output)?;
+        for tool in session.tools.values_mut() { ctx.scrub_content(&mut tool.input)?; }
         for pending in session.done.values_mut() { scrub_payload(ctx, &mut pending.payload)?; }
         if ctx.config.content_cap_bytes == 0 {
             for step in session.steps.values_mut() { step.output.clear();step.output_bytes=0; }
             for row in &mut session.backlog {
                 if let Some(object)=row.as_object_mut() { object.retain(|key,_|["type","time","agentId","turnId","reason","model","provider","event"].contains(&key.as_str())); }
-                if let Some(event)=row.get_mut("event").and_then(Value::as_object_mut) { event.retain(|key,_|["type","uuid","stepUuid","toolCallId","messageId","usage"].contains(&key.as_str())); }
+                if let Some(event)=row.get_mut("event").and_then(Value::as_object_mut) {
+                    if let Some(result)=event.get_mut("result").and_then(Value::as_object_mut) {
+                        let failed=result.get("error").is_some_and(|v|!v.is_null()) || result.get("isError")==Some(&Value::Bool(true));
+                        result.clear();result.insert("isError".into(),json!(failed));
+                    }
+                    event.retain(|key,_|["type","uuid","stepUuid","toolCallId","messageId","usage","name","result"].contains(&key.as_str()));
+                }
             }
         }
     }
@@ -117,6 +124,7 @@ fn native(s: &mut Session, p: &Value, ts: u64, events: &mut Vec<Event>) {
         Some("UserPromptSubmit") if s.wire.is_none() => start(s, format!("hook-{ts}"), ts, p.get("prompt").cloned(), events),
         Some("PreToolUse") => { if let Some(id) = text(p, "tool_call_id") { s.tools.entry(id.into()).or_default().start = ts; } }
         Some("PostToolUse" | "PostToolUseFailure") => { if let Some(id) = text(p, "tool_call_id") {
+            if s.completed_tools.contains(id) { return; }
             s.done.insert(id.into(), Pending { payload: p.clone(), ts, ..Default::default() });
         } }
         Some("Stop" | "StopFailure" | "SessionEnd") if s.wire.is_none() => end(s, ts, text(p,"error_message").map(str::to_string), events),
@@ -147,8 +155,10 @@ fn complete_tools(s: &mut Session, events: &mut Vec<Event>) {
             start_ns: if tool.start == 0 { pending.ts } else { tool.start.min(pending.ts) }, end_ns: pending.ts,
             input: p.get("tool_input").cloned(), output: p.get("tool_output").cloned(),
             status: Some(if failure { "error" } else { "ok" }.into()), error: text(p,"error").map(str::to_string), metadata: BTreeMap::new() });
+        s.completed_tools.insert(id.clone());
         false
     });
+    while s.completed_tools.len()>8192 {s.completed_tools.pop_first();}
 }
 fn home_dir() -> Result<PathBuf> {
     std::env::var_os("KIMI_CODE_HOME").map(PathBuf::from).map(Ok).unwrap_or_else(|| crate::paths::home().map(|p| p.join(".kimi-code")))
@@ -196,7 +206,18 @@ fn wire(s: &mut Session, r: &Value, ts: u64, cap: usize, events: &mut Vec<Event>
             let e = &r["event"];
             match text(e,"type") {
                 Some("step.begin") => { if let Some(id) = text(e,"uuid") { s.steps.insert(id.into(), Step { start: ts, ..Default::default() }); } }
-                Some("tool.call") => { if let Some(id) = text(e,"toolCallId") { let tool = s.tools.entry(id.into()).or_default(); tool.identified = true; if tool.start == 0 { tool.start = ts; } } }
+                Some("tool.call") => { if let Some(id) = text(e,"toolCallId") {
+                    if s.completed_tools.contains(id) { return; }
+                    let tool=s.tools.entry(id.into()).or_default();tool.identified=true;if tool.start==0 {tool.start=ts;}
+                    tool.name=text(e,"name").map(str::to_owned);tool.input=if cap==0 {None} else {e.get("args").cloned()};
+                } }
+                Some("tool.result") => { if let (Some(turn),Some(id))=(&s.turn,text(e,"toolCallId")) {
+                    if let Some(tool)=s.tools.remove(id) {
+                        let result=&e["result"];let error=text(result,"error").map(str::to_owned);
+                        events.push(Event::Tool {turn_id:turn.clone(),id:id.into(),parent_id:None,name:tool.name,start_ns:tool.start.min(ts),end_ns:ts,input:tool.input,output:if cap==0 {None} else {result.get("output").cloned()},status:Some(if error.is_some() || result["isError"]==true {"error"} else {"ok"}.into()),error,metadata:BTreeMap::new()});
+                        s.done.remove(id);s.completed_tools.insert(id.into());while s.completed_tools.len()>8192 {s.completed_tools.pop_first();}
+                    }
+                } }
                 Some("content.part") => { if let Some(step) = text(e,"stepUuid").and_then(|id| s.steps.get_mut(id)) {
                     let part = &e["part"]; let encoded = part.to_string(); let remaining = cap.saturating_sub(step.output_bytes);
                     if remaining > 0 { step.output.push(if encoded.len() <= remaining { part.clone() } else { json!(crate::redact::cap(&encoded, remaining)) }); step.output_bytes += encoded.len().min(remaining); }

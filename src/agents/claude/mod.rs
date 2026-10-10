@@ -157,7 +157,8 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
             let sub=state.children.entry(id).or_insert(Child {turn,start:now,..Default::default()});
             sub.end=Some(now);sub.output=payload.get("last_assistant_message").cloned();sub.path=string(payload,"agent_transcript_path").or_else(||sub.path.take());
         },
-        "Stop" | "StopFailure" | "SessionEnd" if child.is_none() => {state.stopped=Some(now);state.output=payload.get("last_assistant_message").cloned();state.error=string(payload,"error").or_else(||(event!="Stop").then(||"turn failed or abandoned".into()));},
+        "Stop" | "StopFailure" if child.is_none() => {state.stopped=Some(now);state.output=payload.get("last_assistant_message").cloned();state.error=string(payload,"error").or_else(||(event=="StopFailure").then(||"turn failed or abandoned".into()));},
+        "SessionEnd" if child.is_none() && state.stopped.is_none() => {state.stopped=Some(now);state.output=payload.get("last_assistant_message").cloned();state.error=Some(string(payload,"error").unwrap_or_else(||"session ended before Stop".into()));},
         _ => {},
     }
     announce_children(state,events);

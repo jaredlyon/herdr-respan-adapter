@@ -132,3 +132,17 @@ fn metadata_only_scrubs_hook_queue_and_future_wire_backlog() {
     state.sessions.insert("test".into(),session);save_state(&ctx,&mut state).unwrap();
     let saved=std::fs::read_to_string(ctx.state_dir().join("native.json")).unwrap();assert!(!saved.contains("metadata-private-sentinel"));assert!(saved.contains("turn.prompt"));
 }
+
+#[test]
+fn durable_tool_result_survives_missing_post_hook_and_dedupes_late_hook() {
+    for cap in [0,16384] {
+        let mut s=Session {wire:Some(PathBuf::from("wire.jsonl")),..Default::default()};let mut events=vec![];
+        wire(&mut s,&json!({"type":"turn.prompt","agentId":"main","turnId":0}),1,cap,&mut events);
+        wire(&mut s,&json!({"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","toolCallId":"tool","name":"Bash","args":{"command":"echo metadata-private-sentinel"}}}),2,cap,&mut events);
+        wire(&mut s,&json!({"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.result","toolCallId":"tool","result":{"output":"metadata-private-sentinel"}}}),3,cap,&mut events);
+        native(&mut s,&json!({"hook_event_name":"PostToolUse","tool_call_id":"tool","tool_name":"Bash","tool_input":{},"tool_output":"late"}),4,&mut events);complete_tools(&mut s,&mut events);
+        let tools=events.iter().filter(|e|matches!(e,Event::Tool {..})).collect::<Vec<_>>();assert_eq!(tools.len(),1);
+        assert!(matches!(tools[0],Event::Tool {name:Some(name),input,output,..} if name=="Bash" && (cap!=0 || (input.is_none()&&output.is_none()))));
+        assert!(s.done.is_empty());assert!(s.tools.is_empty());
+    }
+}

@@ -94,3 +94,5 @@ sessions, or real Respan/provider endpoints are touched. Authentication,
 real-network/Respan behavior, and successor subagents are not mock-qualified.
 
 Metadata-only capture (`content_cap_bytes = 0`) strips native prompt/tool/output fields before queuing and removes content from future wire backlog rows and pending step buffers before state saves; event correlation and usage remain.
+
+Durable `tool.call` / `tool.result` records also supply tool spans when the CLI omits its post-tool observer hook. Native post-hook completions and wire results deduplicate by the same tool-call ID.

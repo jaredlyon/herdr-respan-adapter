@@ -1,4 +1,5 @@
 """Hermes observers translate kwargs only; Rust owns redaction and delivery."""
+import atexit
 import json
 import os
 import subprocess
@@ -12,6 +13,8 @@ _INTERACTIVE = {"cli", "tui", "desktop", "acp"}
 _LOCK = threading.RLock()
 _TURNS = {}
 _CHILDREN = {}
+_CLOSED = {}  # Last completed turn per native session, for late auxiliary observers.
+_AUX_PENDING = {}
 
 
 def _enabled():
@@ -39,8 +42,29 @@ def _send(batch):
         pass
 
 
+def _take_aux():
+    with _LOCK:
+        batches = list(_AUX_PENDING.values())
+        _AUX_PENDING.clear()
+        return batches
+
+
+def _send_all(batches):
+    for batch in batches:
+        _send(batch)
+
+
 def _dispatch(batch):
-    threading.Thread(target=_send, args=(batch,), name="herdr-respan-handoff", daemon=True).start()
+    batches = [batch] + _take_aux()
+    threading.Thread(target=_send_all, args=(batches,), name="herdr-respan-handoff", daemon=True).start()
+
+
+def _exit_handoff():
+    if _enabled():
+        _send_all(_take_aux())
+
+
+atexit.register(_exit_handoff)
 
 
 def _location(k):
@@ -60,7 +84,7 @@ def _location(k):
 
 
 def _append(turn, kind, **fields):
-    turn["batch"]["events"].append({"type": kind, "turn_id": turn["batch"]["events"][0]["turn_id"], **fields})
+    turn["batch"]["events"].append({"type": kind, "turn_id": turn.get("turn_id") or turn["batch"]["events"][0]["turn_id"], **fields})
 
 
 def _finish(key, turn):
@@ -68,6 +92,8 @@ def _finish(key, turn):
         return None
     _append(turn, "turn_end", ts_ns=turn["end_ns"], output=turn.get("output"),
             status=turn["status"], error=turn.get("error"))
+    _CLOSED[key[0]] = {"turn_id": key[1], "requests": turn["requests"],
+                       "batch": dict(turn["batch"], events=[])}
     del _TURNS[key]
     for sid, (root, _) in list(_CHILDREN.items()):
         if root == key:
@@ -88,7 +114,7 @@ def _request_input(k):
         return request
     if not isinstance(messages, list):
         messages = [{"role": "user", "content": messages}]
-    if system:
+    if system and not any(isinstance(m, dict) and m.get("role") in ("system", "developer") for m in messages):
         messages = [{"role": "system", "content": system}] + messages
     return messages
 
@@ -157,10 +183,17 @@ def _observe(name, k):
                         _dispatch(finished)
         else:
             location = _location(k)
+            late_aux = False
             if location is None:
-                return
-            key, parent_id = location
-            turn = _TURNS[key]
+                closed = _CLOSED.get(k.get("session_id"))
+                if (name not in ("pre_auxiliary_call", "post_auxiliary_call") or not closed
+                        or k.get("turn_id") != closed["turn_id"] or k.get("platform") not in _INTERACTIVE):
+                    return
+                key, parent_id = (k["session_id"], closed["turn_id"]), None
+                turn, late_aux = closed, True
+            else:
+                key, parent_id = location
+                turn = _TURNS[key]
             if name == "post_llm_call":
                 if parent_id is None:
                     turn["output"] = k.get("assistant_response")
@@ -204,6 +237,10 @@ def _observe(name, k):
                         model=k.get("response_model") or k.get("model"), provider=k.get("provider"), usage=usage,
                         aux_task=k.get("aux_task") if name == "post_auxiliary_call" else None,
                         status="error" if error or name == "api_request_error" else "ok", error=error)
+                if late_aux:
+                    pending = _AUX_PENDING.setdefault(key, dict(turn["batch"], events=[]))
+                    pending["events"].extend(turn["batch"]["events"])
+                    turn["batch"]["events"] = []
             elif name == "pre_tool_call":
                 tid = k.get("tool_call_id")
                 if tid:

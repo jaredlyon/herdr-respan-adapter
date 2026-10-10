@@ -136,6 +136,53 @@ class PluginTests(unittest.TestCase):
         self.assertEqual(chats[0]["output"], marker)
         self.assertEqual(chats[1]["input"], [{"role": "system", "content": "system"}, {"role": "user", "content": "example"}])
 
+    def test_live_requests_tools_and_auxiliary_after_turn_end(self):
+        with patch.object(self.module, "_send", side_effect=self.sent.append):
+            for name, kwargs in json.loads((ROOT / "fixtures/live-hooks.json").read_text()):
+                self.call(name, **kwargs)
+            self.module._exit_handoff()
+        self.assertEqual(len(self.sent), 4)  # Two main turns, two auxiliary follow-up batches.
+        events = [e for b in self.sent for e in b["events"]]
+        self.assertEqual(sum(e["type"] == "turn_start" for e in events), 2)
+        self.assertEqual(sum(e["type"] == "turn_end" for e in events), 2)
+        chats = [e for e in events if e["type"] == "chat"]
+        self.assertEqual(len(chats), 5)
+        self.assertEqual(sum(e.get("aux_task") == "title_generation" for e in chats), 2)
+        self.assertEqual(len({e["id"] for e in chats}), 5)
+        for chat in chats:
+            self.assertEqual(chat["usage"]["input_tokens"], 11)
+            self.assertEqual(chat["usage"]["output_tokens"], 7)
+            self.assertEqual(chat["usage"]["cache_read_input_tokens"], 3)
+            self.assertEqual(sum(m.get("role") == "system" for m in chat["input"]), 1)
+        tool = next(e for e in events if e["type"] == "tool")
+        self.assertEqual(tool["name"], "terminal")
+        self.assertEqual(tool["input"], {"command": "echo hra-e2e"})
+        self.assertEqual(json.loads(tool["output"])["exit_code"], 0)
+        for batch in self.sent[2:]:
+            self.assertTrue(all(e["type"] == "chat" for e in batch["events"]))
+            self.assertTrue(all(e["turn_id"] == batch["session_id"] + ":turn-1" for e in batch["events"]))
+        self.assertFalse(self.module._AUX_PENDING)
+
+    def test_late_auxiliary_batched_at_next_main_handoff(self):
+        self.start()
+        self.end()
+        for rid in ("aux-1", "aux-2"):
+            self.call("pre_auxiliary_call", session_id="s", turn_id="t", platform="cli", api_request_id=rid,
+                      request={"body": {"messages": [{"role": "user", "content": "title"}]}})
+            self.call("post_auxiliary_call", session_id="s", turn_id="t", platform="cli", api_request_id=rid, aux_task="title")
+        self.assertEqual(len(self.sent), 1)  # No subprocess/thread per auxiliary request.
+        self.call("post_auxiliary_call", session_id="s", turn_id="wrong", platform="cli", api_request_id="foreign")
+        self.call("post_auxiliary_call", session_id="s", turn_id="t", platform="discord", api_request_id="foreign")
+        self.dispatch.stop()
+        with patch.object(self.module.threading, "Thread") as thread:
+            self.start(turn_id="next")
+            self.end(turn_id="next")
+        self.assertEqual(thread.call_count, 1)
+        batches = thread.call_args.kwargs["args"][0]
+        self.assertEqual(len(batches), 2)
+        self.assertEqual([e["id"] for e in batches[1]["events"]], ["aux-1", "aux-2"])
+        self.assertFalse(self.module._AUX_PENDING)
+
     def test_handoff_is_background_and_windows_uses_no_window(self):
         self.dispatch.stop()
         entered, release, done = threading.Event(), threading.Event(), threading.Event()

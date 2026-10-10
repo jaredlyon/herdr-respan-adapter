@@ -1,0 +1,1336 @@
+[
+  [
+    "pre_llm_call",
+    {
+      "session_id": "live-session-1",
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "user_message": "Say the deterministic mock text.",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "Say the deterministic mock text.",
+          "timestamp": 1791597017.9748857
+        }
+      ],
+      "is_first_turn": true,
+      "model": "mock-model",
+      "platform": "cli",
+      "parent_session_id": "",
+      "sender_id": "",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_api_request",
+    {
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "api_request_id": "live-session-1:turn-1:api:1",
+      "session_id": "live-session-1",
+      "user_message": "Say the deterministic mock text.",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "Say the deterministic mock text.",
+          "timestamp": 1791597017.9748857,
+          "_db_persisted": true,
+          "_row_id": 1,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        }
+      ],
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 1,
+      "retry_count": 0,
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "[captured system prompt omitted]"
+        },
+        {
+          "role": "user",
+          "content": "Say the deterministic mock text."
+        }
+      ],
+      "system_prompt": "[captured system prompt omitted]",
+      "message_count": 2,
+      "tool_count": 4,
+      "approx_input_tokens": 1319,
+      "request_char_count": 5276,
+      "max_tokens": null,
+      "started_at": 1791597018.3116472,
+      "middleware_trace": [],
+      "request": {
+        "method": "POST",
+        "body": {
+          "model": "mock-model",
+          "messages": [
+            {
+              "role": "system",
+              "content": "[captured system prompt omitted]"
+            },
+            {
+              "role": "user",
+              "content": "Say the deterministic mock text."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "background": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]",
+                      "minimum": 1
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "pty": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "notify": {
+                      "description": "[captured tool description omitted]",
+                      "anyOf": [
+                        "<dict depth limit>",
+                        "<dict depth limit>"
+                      ]
+                    },
+                    "heartbeat": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "default": 0,
+                      "description": "[captured tool description omitted]"
+                    },
+                    "persist_on_release": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "command"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_search",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "queries": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "queries"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_describe",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "names": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "names"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_call",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "calls": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>",
+                        "properties": "<dict depth limit>",
+                        "required": "<list depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "calls"
+                  ]
+                }
+              }
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_api_request",
+    {
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "api_request_id": "live-session-1:turn-1:api:1",
+      "session_id": "live-session-1",
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 1,
+      "api_duration": 0.13268733024597168,
+      "started_at": 1791597018.3116472,
+      "ended_at": 1791597018.4443345,
+      "first_chunk_at": 1791597018.4421506,
+      "finish_reason": "stop",
+      "message_count": 2,
+      "response_model": "mock-model",
+      "response": {
+        "model": "mock-model",
+        "upstream_provider": null,
+        "finish_reason": "stop",
+        "assistant_message": {
+          "role": "assistant",
+          "content": "hra-e2e mock response",
+          "tool_calls": []
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 7,
+          "cache_read_tokens": 3,
+          "cache_write_tokens": 0,
+          "reasoning_tokens": 0,
+          "request_count": 1,
+          "prompt_tokens": 11,
+          "total_tokens": 18
+        }
+      },
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_tokens": 3,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "request_count": 1,
+        "prompt_tokens": 11,
+        "total_tokens": 18
+      },
+      "context_length": 256000,
+      "assistant_message": "NormalizedResponse(content='hra-e2e mock response', tool_calls=None, finish_reason='stop', reasoning=None, usage=Usage(prompt_tokens=11, completion_tokens=7, total_tokens=18, cached_tokens=0))",
+      "assistant_content_chars": 21,
+      "assistant_tool_call_count": 0,
+      "moa_references": null,
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_llm_call",
+    {
+      "session_id": "live-session-1",
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "user_message": "Say the deterministic mock text.",
+      "assistant_response": "hra-e2e mock response",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "Say the deterministic mock text.",
+          "timestamp": 1791597017.9748857,
+          "_db_persisted": true,
+          "_row_id": 1,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "assistant",
+          "content": "hra-e2e mock response",
+          "reasoning": null,
+          "finish_reason": "stop",
+          "timestamp": 1791597018.460792,
+          "_db_persisted": true,
+          "_row_id": 2,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        }
+      ],
+      "model": "mock-model",
+      "platform": "cli",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "on_session_end",
+    {
+      "session_id": "live-session-1",
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "completed": true,
+      "failed": false,
+      "interrupted": false,
+      "turn_exit_reason": "text_response(finish_reason=stop)",
+      "model": "mock-model",
+      "platform": "cli",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_auxiliary_call",
+    {
+      "session_id": "live-session-1",
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "platform": "cli",
+      "aux_task": "title_generation",
+      "api_request_id": "aux-ddfa2b18c06c471c91e3ddf6c091ae79",
+      "retry_count": 0,
+      "api_call_count": 1,
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1/",
+      "api_mode": "chat_completions",
+      "streaming": false,
+      "started_at": 1791597018.4835033,
+      "message_count": 2,
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "[captured system prompt omitted]"
+        },
+        {
+          "role": "user",
+          "content": "Say the deterministic mock text."
+        }
+      ],
+      "system_prompt": "[captured system prompt omitted]",
+      "tool_count": 0,
+      "approx_input_tokens": 243,
+      "request_char_count": 974,
+      "max_tokens": null,
+      "request": {
+        "method": "POST",
+        "body": {
+          "model": "mock-model",
+          "messages": [
+            {
+              "role": "system",
+              "content": "[captured system prompt omitted]"
+            },
+            {
+              "role": "user",
+              "content": "Say the deterministic mock text."
+            }
+          ],
+          "reasoning_effort": "none",
+          "extra_body": {
+            "response_format": {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "session_title",
+                "strict": true,
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_auxiliary_call",
+    {
+      "session_id": "live-session-1",
+      "task_id": "live-session-1",
+      "turn_id": "live-session-1:turn-1",
+      "platform": "cli",
+      "aux_task": "title_generation",
+      "api_request_id": "aux-ddfa2b18c06c471c91e3ddf6c091ae79",
+      "retry_count": 0,
+      "api_call_count": 1,
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1/",
+      "api_mode": "chat_completions",
+      "streaming": false,
+      "started_at": 1791597018.4835033,
+      "message_count": 2,
+      "ended_at": 1791597018.4916449,
+      "api_duration": 0.008141517639160156,
+      "error": null,
+      "error_type": null,
+      "finish_reason": "stop",
+      "response_model": "mock-model",
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_tokens": 3,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "request_count": 1,
+        "prompt_tokens": 11,
+        "total_tokens": 18
+      },
+      "response": {
+        "model": "mock-model",
+        "finish_reason": "stop",
+        "assistant_message": {
+          "role": "assistant",
+          "content": "hra-e2e mock response",
+          "tool_calls": []
+        },
+        "usage": null
+      },
+      "assistant_content_chars": 21,
+      "assistant_tool_call_count": 0,
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "on_session_finalize",
+    {
+      "session_id": "live-session-1",
+      "platform": "cli",
+      "reason": "shutdown",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_llm_call",
+    {
+      "session_id": "live-session-2",
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "user_message": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply.",
+          "timestamp": 1791597019.7897248
+        }
+      ],
+      "is_first_turn": true,
+      "model": "mock-model",
+      "platform": "cli",
+      "parent_session_id": "",
+      "sender_id": "",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_api_request",
+    {
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:1",
+      "session_id": "live-session-2",
+      "user_message": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply.",
+          "timestamp": 1791597019.7897248,
+          "_db_persisted": true,
+          "_row_id": 3,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        }
+      ],
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 1,
+      "retry_count": 0,
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "[captured system prompt omitted]"
+        },
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "system_prompt": "[captured system prompt omitted]",
+      "message_count": 2,
+      "tool_count": 4,
+      "approx_input_tokens": 1321,
+      "request_char_count": 5284,
+      "max_tokens": null,
+      "started_at": 1791597020.0977225,
+      "middleware_trace": [],
+      "request": {
+        "method": "POST",
+        "body": {
+          "model": "mock-model",
+          "messages": [
+            {
+              "role": "system",
+              "content": "[captured system prompt omitted]"
+            },
+            {
+              "role": "user",
+              "content": "RUN_TOOL: execute echo hra-e2e then reply."
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "background": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]",
+                      "minimum": 1
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "pty": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "notify": {
+                      "description": "[captured tool description omitted]",
+                      "anyOf": [
+                        "<dict depth limit>",
+                        "<dict depth limit>"
+                      ]
+                    },
+                    "heartbeat": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "default": 0,
+                      "description": "[captured tool description omitted]"
+                    },
+                    "persist_on_release": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "command"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_search",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "queries": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "queries"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_describe",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "names": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "names"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_call",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "calls": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>",
+                        "properties": "<dict depth limit>",
+                        "required": "<list depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "calls"
+                  ]
+                }
+              }
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_api_request",
+    {
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:1",
+      "session_id": "live-session-2",
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 1,
+      "api_duration": 0.0889894962310791,
+      "started_at": 1791597020.0977225,
+      "ended_at": 1791597020.186712,
+      "first_chunk_at": 1791597020.1849437,
+      "finish_reason": "tool_calls",
+      "message_count": 2,
+      "response_model": "mock-model",
+      "response": {
+        "model": "mock-model",
+        "upstream_provider": null,
+        "finish_reason": "tool_calls",
+        "assistant_message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_hra_15",
+              "name": "terminal",
+              "arguments": "{\"command\": \"echo hra-e2e\"}",
+              "provider_data": null
+            }
+          ]
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 7,
+          "cache_read_tokens": 3,
+          "cache_write_tokens": 0,
+          "reasoning_tokens": 0,
+          "request_count": 1,
+          "prompt_tokens": 11,
+          "total_tokens": 18
+        }
+      },
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_tokens": 3,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "request_count": 1,
+        "prompt_tokens": 11,
+        "total_tokens": 18
+      },
+      "context_length": 256000,
+      "assistant_message": "NormalizedResponse(content=None, tool_calls=[ToolCall(id='call_hra_15', name='terminal', arguments='{\"command\": \"echo hra-e2e\"}')], finish_reason='tool_calls', reasoning=None, usage=Usage(prompt_tokens=11, completion_tokens=7, total_tokens=18, cached_tokens=0))",
+      "assistant_content_chars": 0,
+      "assistant_tool_call_count": 1,
+      "moa_references": null,
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_tool_call",
+    {
+      "tool_name": "terminal",
+      "args": {
+        "command": "echo hra-e2e"
+      },
+      "task_id": "live-session-2",
+      "session_id": "live-session-2",
+      "tool_call_id": "call_hra_15",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:1",
+      "middleware_trace": [],
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_tool_call",
+    {
+      "tool_name": "terminal",
+      "args": {
+        "command": "echo hra-e2e"
+      },
+      "result": "{\"output\": \"hra-e2e\", \"exit_code\": 0, \"error\": null}",
+      "task_id": "live-session-2",
+      "session_id": "live-session-2",
+      "tool_call_id": "call_hra_15",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:1",
+      "duration_ms": 91,
+      "status": "ok",
+      "error_type": null,
+      "error_message": null,
+      "middleware_trace": [],
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_api_request",
+    {
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:2",
+      "session_id": "live-session-2",
+      "user_message": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply.",
+          "timestamp": 1791597019.7897248,
+          "_db_persisted": true,
+          "_row_id": 3,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning": null,
+          "finish_reason": "tool_calls",
+          "timestamp": 1791597020.1951065,
+          "tool_calls": [
+            {
+              "id": "call_hra_15",
+              "call_id": "call_hra_15",
+              "response_item_id": "fc_hra_15",
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "arguments": "{\"command\": \"echo hra-e2e\"}"
+              }
+            }
+          ],
+          "_db_persisted": true,
+          "_row_id": 4,
+          "message_uid": "scrubbed-id",
+          "_tool_call_uids": {
+            "call_hra_15": "b5e339e281064c9e872c5cff7b4ae550"
+          },
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "tool",
+          "name": "terminal",
+          "tool_name": "terminal",
+          "content": "{\"output\": \"hra-e2e\", \"exit_code\": 0, \"error\": null}",
+          "tool_call_id": "call_hra_15",
+          "timestamp": 1791597020.3194685,
+          "_tool_call_uid": "b5e339e281064c9e872c5cff7b4ae550",
+          "_db_persisted": true,
+          "_row_id": 5,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        }
+      ],
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 2,
+      "retry_count": 0,
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "[captured system prompt omitted]"
+        },
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply."
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "tool_calls": [
+            {
+              "id": "call_hra_15",
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "arguments": "{\"command\":\"echo hra-e2e\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "content": "{\"output\": \"hra-e2e\", \"exit_code\": 0, \"error\": null}",
+          "tool_call_id": "call_hra_15"
+        }
+      ],
+      "system_prompt": "[captured system prompt omitted]",
+      "message_count": 4,
+      "tool_count": 4,
+      "approx_input_tokens": 1416,
+      "request_char_count": 5664,
+      "max_tokens": null,
+      "started_at": 1791597020.3261974,
+      "middleware_trace": [],
+      "request": {
+        "method": "POST",
+        "body": {
+          "model": "mock-model",
+          "messages": [
+            {
+              "role": "system",
+              "content": "[captured system prompt omitted]"
+            },
+            {
+              "role": "user",
+              "content": "RUN_TOOL: execute echo hra-e2e then reply."
+            },
+            {
+              "role": "assistant",
+              "content": "",
+              "tool_calls": [
+                {
+                  "id": "call_hra_15",
+                  "type": "function",
+                  "function": {
+                    "name": "terminal",
+                    "arguments": "{\"command\":\"echo hra-e2e\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "content": "{\"output\": \"hra-e2e\", \"exit_code\": 0, \"error\": null}",
+              "tool_call_id": "call_hra_15"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "command": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "background": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "timeout": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]",
+                      "minimum": 1
+                    },
+                    "workdir": {
+                      "type": "string",
+                      "description": "[captured tool description omitted]"
+                    },
+                    "pty": {
+                      "type": "boolean",
+                      "description": "[captured tool description omitted]",
+                      "default": false
+                    },
+                    "notify": {
+                      "description": "[captured tool description omitted]",
+                      "anyOf": [
+                        "<dict depth limit>",
+                        "<dict depth limit>"
+                      ]
+                    },
+                    "heartbeat": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "default": 0,
+                      "description": "[captured tool description omitted]"
+                    },
+                    "persist_on_release": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "command"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_search",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "queries": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "queries"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_describe",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "names": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "names"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "tool_call",
+                "description": "[captured tool description omitted]",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "calls": {
+                      "type": "array",
+                      "items": {
+                        "type": "<str depth limit>",
+                        "properties": "<dict depth limit>",
+                        "required": "<list depth limit>"
+                      },
+                      "description": "[captured tool description omitted]"
+                    }
+                  },
+                  "required": [
+                    "calls"
+                  ]
+                }
+              }
+            }
+          ],
+          "reasoning_effort": "medium"
+        }
+      },
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_api_request",
+    {
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "api_request_id": "live-session-2:turn-1:api:2",
+      "session_id": "live-session-2",
+      "platform": "cli",
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1",
+      "api_mode": "chat_completions",
+      "api_call_count": 2,
+      "api_duration": 0.008840322494506836,
+      "started_at": 1791597020.3261974,
+      "ended_at": 1791597020.3350377,
+      "first_chunk_at": 1791597020.332535,
+      "finish_reason": "stop",
+      "message_count": 4,
+      "response_model": "mock-model",
+      "response": {
+        "model": "mock-model",
+        "upstream_provider": null,
+        "finish_reason": "stop",
+        "assistant_message": {
+          "role": "assistant",
+          "content": "hra-e2e mock response",
+          "tool_calls": []
+        },
+        "usage": {
+          "input_tokens": 8,
+          "output_tokens": 7,
+          "cache_read_tokens": 3,
+          "cache_write_tokens": 0,
+          "reasoning_tokens": 0,
+          "request_count": 1,
+          "prompt_tokens": 11,
+          "total_tokens": 18
+        }
+      },
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_tokens": 3,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "request_count": 1,
+        "prompt_tokens": 11,
+        "total_tokens": 18
+      },
+      "context_length": 256000,
+      "assistant_message": "NormalizedResponse(content='hra-e2e mock response', tool_calls=None, finish_reason='stop', reasoning=None, usage=Usage(prompt_tokens=11, completion_tokens=7, total_tokens=18, cached_tokens=0))",
+      "assistant_content_chars": 21,
+      "assistant_tool_call_count": 0,
+      "moa_references": null,
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "pre_auxiliary_call",
+    {
+      "session_id": "live-session-2",
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "platform": "cli",
+      "aux_task": "title_generation",
+      "api_request_id": "aux-3ee3ef6e55844b8f80f129c31e613c90",
+      "retry_count": 0,
+      "api_call_count": 1,
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1/",
+      "api_mode": "chat_completions",
+      "streaming": false,
+      "started_at": 1791597020.3523567,
+      "message_count": 2,
+      "request_messages": [
+        {
+          "role": "system",
+          "content": "[captured system prompt omitted]"
+        },
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ],
+      "system_prompt": "[captured system prompt omitted]",
+      "tool_count": 0,
+      "approx_input_tokens": 246,
+      "request_char_count": 984,
+      "max_tokens": null,
+      "request": {
+        "method": "POST",
+        "body": {
+          "model": "mock-model",
+          "messages": [
+            {
+              "role": "system",
+              "content": "[captured system prompt omitted]"
+            },
+            {
+              "role": "user",
+              "content": "RUN_TOOL: execute echo hra-e2e then reply."
+            }
+          ],
+          "reasoning_effort": "none",
+          "extra_body": {
+            "response_format": {
+              "type": "json_schema",
+              "json_schema": {
+                "name": "session_title",
+                "strict": true,
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_llm_call",
+    {
+      "session_id": "live-session-2",
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "user_message": "RUN_TOOL: execute echo hra-e2e then reply.",
+      "assistant_response": "hra-e2e mock response",
+      "conversation_history": [
+        {
+          "role": "user",
+          "content": "RUN_TOOL: execute echo hra-e2e then reply.",
+          "timestamp": 1791597019.7897248,
+          "_db_persisted": true,
+          "_row_id": 3,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "assistant",
+          "content": "",
+          "reasoning": null,
+          "finish_reason": "tool_calls",
+          "timestamp": 1791597020.1951065,
+          "tool_calls": [
+            {
+              "id": "call_hra_15",
+              "call_id": "call_hra_15",
+              "response_item_id": "fc_hra_15",
+              "type": "function",
+              "function": {
+                "name": "terminal",
+                "arguments": "{\"command\": \"echo hra-e2e\"}"
+              }
+            }
+          ],
+          "_db_persisted": true,
+          "_row_id": 4,
+          "message_uid": "scrubbed-id",
+          "_tool_call_uids": {
+            "call_hra_15": "b5e339e281064c9e872c5cff7b4ae550"
+          },
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "tool",
+          "name": "terminal",
+          "tool_name": "terminal",
+          "content": "{\"output\": \"hra-e2e\", \"exit_code\": 0, \"error\": null}",
+          "tool_call_id": "call_hra_15",
+          "timestamp": 1791597020.3194685,
+          "_tool_call_uid": "b5e339e281064c9e872c5cff7b4ae550",
+          "_db_persisted": true,
+          "_row_id": 5,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        },
+        {
+          "role": "assistant",
+          "content": "hra-e2e mock response",
+          "reasoning": null,
+          "finish_reason": "stop",
+          "timestamp": 1791597020.3412821,
+          "_db_persisted": true,
+          "_row_id": 6,
+          "message_uid": "scrubbed-id",
+          "_db_row_snapshot": "scrubbed-id"
+        }
+      ],
+      "model": "mock-model",
+      "platform": "cli",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "on_session_end",
+    {
+      "session_id": "live-session-2",
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "completed": true,
+      "failed": false,
+      "interrupted": false,
+      "turn_exit_reason": "text_response(finish_reason=stop)",
+      "model": "mock-model",
+      "platform": "cli",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "post_auxiliary_call",
+    {
+      "session_id": "live-session-2",
+      "task_id": "live-session-2",
+      "turn_id": "live-session-2:turn-1",
+      "platform": "cli",
+      "aux_task": "title_generation",
+      "api_request_id": "aux-3ee3ef6e55844b8f80f129c31e613c90",
+      "retry_count": 0,
+      "api_call_count": 1,
+      "model": "mock-model",
+      "provider": "custom",
+      "base_url": "http://127.0.0.1:42645/v1/",
+      "api_mode": "chat_completions",
+      "streaming": false,
+      "started_at": 1791597020.3523567,
+      "message_count": 2,
+      "ended_at": 1791597020.35987,
+      "api_duration": 0.007513284683227539,
+      "error": null,
+      "error_type": null,
+      "finish_reason": "tool_calls",
+      "response_model": "mock-model",
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "cache_read_tokens": 3,
+        "cache_write_tokens": 0,
+        "reasoning_tokens": 0,
+        "request_count": 1,
+        "prompt_tokens": 11,
+        "total_tokens": 18
+      },
+      "response": {
+        "model": "mock-model",
+        "finish_reason": "tool_calls",
+        "assistant_message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_hra_17",
+              "function": {
+                "arguments": "{\"command\": \"echo hra-e2e\"}",
+                "name": "bash"
+              },
+              "type": "function",
+              "index": 0
+            }
+          ]
+        },
+        "usage": null
+      },
+      "assistant_content_chars": 0,
+      "assistant_tool_call_count": 1,
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ],
+  [
+    "on_session_finalize",
+    {
+      "session_id": "live-session-2",
+      "platform": "cli",
+      "reason": "shutdown",
+      "telemetry_schema_version": "hermes.observer.v1"
+    }
+  ]
+]

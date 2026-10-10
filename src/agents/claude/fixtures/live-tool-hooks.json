@@ -1,0 +1,74 @@
+[
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-tool",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "RUN_TOOL: execute echo hra-e2e then reply."
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-tool",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hra-e2e",
+      "description": "Harmless mock E2E echo"
+    },
+    "tool_use_id": "toolu_hra_2"
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-tool",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hra-e2e",
+      "description": "Harmless mock E2E echo"
+    },
+    "tool_response": {
+      "stdout": "hra-e2e",
+      "stderr": "",
+      "interrupted": false,
+      "isImage": false,
+      "noOutputExpected": false
+    },
+    "tool_use_id": "toolu_hra_2",
+    "duration_ms": 28
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-tool",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "hra-e2e mock response",
+    "background_tasks": [],
+    "session_crons": []
+  },
+  {
+    "session_id": "live-tool",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-tool",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  }
+]

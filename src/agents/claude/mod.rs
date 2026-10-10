@@ -1,6 +1,7 @@
 //! Silent native hooks and incremental Claude transcript translation.
 mod setup;
 #[cfg(test)] mod tests;
+#[cfg(test)] mod live_tests;
 use crate::{agents::{common::{bridge::{self, Batch, Event}, jsonl::{self, Cursor}}, AgentSpec}, record::{HookCtx, Usage}, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

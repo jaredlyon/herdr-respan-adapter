@@ -1,0 +1,38 @@
+[
+  {
+    "session_id": "live-text",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-text",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Say the deterministic mock text."
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-text",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "hra-e2e mock response",
+    "background_tasks": [],
+    "session_crons": []
+  },
+  {
+    "session_id": "live-text",
+    "transcript_path": "$TRANSCRIPT",
+    "cwd": "/fixture/work",
+    "prompt_id": "live-prompt-text",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  }
+]

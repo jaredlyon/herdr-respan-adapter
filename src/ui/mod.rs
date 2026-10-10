@@ -60,6 +60,7 @@ fn status(paths: &Paths) -> Result<()> {
     let credentials = crate::config::credentials(&paths.config, &crate::paths::home()?, std::env::var("RESPAN_API_KEY").ok())?;
     let report = crate::status::report(paths, credentials.as_ref())?;
     println!("Respan — {}\n", env!("CARGO_PKG_VERSION"));
+    if report["tracing"] == "off" { println!("Tracing is OFF on this machine (turn it back on with the \"Turn Respan tracing on\" action or `herdr-respan on`)\n"); }
     if let Some(agents) = report["agents"].as_array() {
         for agent in agents {
             let kind = agent["kind"].as_str().unwrap_or("unknown");

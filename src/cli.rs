@@ -6,7 +6,7 @@ pub enum Command {
     Hook { agent: String }, Lifecycle, Flush { detach: bool },
     Setup { agents: Vec<String>, all: bool, dry_run: bool, yes: bool, accept: Vec<String>, project: Option<PathBuf> },
     Remove { agents: Vec<String>, all: bool, project: Option<PathBuf> },
-    Status, Pause { workspace: Option<String>, paused: bool }, Test, Startup,
+    Status, Pause { workspace: Option<String>, paused: bool }, Switch { on: bool }, Test, Startup,
     /// Validated here, implemented by the Proxy (`proxy`, `run`) and HerdrSurface (`config`, `ui`) slices.
     /// `args` are every argument after the command name, unmodified.
     Proxy, Run { args: Vec<String> }, Config { args: Vec<String> }, Ui { args: Vec<String> },
@@ -58,6 +58,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli> {
             Command::Pause { workspace, paused: name == "pause" }
         }
         "status" => Command::Status,
+        "on" | "off" => Command::Switch { on: name == "on" },
         "test" => Command::Test,
         "startup" => Command::Startup,
         "proxy" => { if args.next().as_deref() != Some("serve") { return Err("expected proxy serve".into()); } Command::Proxy }
@@ -93,10 +94,10 @@ pub const KINDS: &[&str] = &["claude", "codex", "omp", "pi", "gemini", "opencode
 #[cfg(test)] mod tests {
     use super::*;
     #[test] fn commands() {
-        for args in ["hook claude --state-dir /s --config-dir /c", "flush --detach", "setup --all --dry-run", "remove codex", "pause --workspace w", "resume", "lifecycle", "status", "test", "startup", "proxy serve", "run claude -- -p hi", "run --protocol openai -- echo hi", "config push spark", "ui status"] {
+        for args in ["hook claude --state-dir /s --config-dir /c", "flush --detach", "setup --all --dry-run", "remove codex", "pause --workspace w", "resume", "on", "off", "lifecycle", "status", "test", "startup", "proxy serve", "run claude -- -p hi", "run --protocol openai -- echo hi", "config push spark", "ui status"] {
             assert!(parse(args.split_whitespace().map(str::to_string)).is_ok(), "{args}");
         }
-        for args in ["hook", "flush nope", "setup --all claude", "run --protocol bad -- x", "config push", "pause --workspace"] {
+        for args in ["hook", "flush nope", "setup --all claude", "run --protocol bad -- x", "config push", "pause --workspace", "off now"] {
             assert!(parse(args.split_whitespace().map(str::to_string)).is_err());
         }
     }

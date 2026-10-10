@@ -53,7 +53,7 @@ herdr-respan remove codex
 
 Relocated agent config directories are honored by each adapter; consult its linked README for exact variables and files. Global setup is the default; supported project-local setup uses `--project`. Startup refreshes already-owned binary/extension assets after version changes; new config entries always require another explicit setup.
 
-Actions: `setup`, `remove` (all owned adapters), `status`, `test`, `run`, `pause`, `resume`, `config-export`, `config-import`, `config-push`. Terminal entrypoints include `status`, `setup`, `import`, secret `export`, `push`, agent chooser `run-choice`, and the `run` split. Ordinary action commands are asynchronous and their output appears in herdr logs; credential export instead opens a PTY popup so the blob is not captured in those action logs.
+Actions: `setup`, `remove` (all owned adapters), `status`, `test`, `run`, `off`, `on`, `pause`, `resume`, `config-export`, `config-import`, `config-push`. Terminal entrypoints include `status`, `setup`, `import`, secret `export`, `push`, agent chooser `run-choice`, and the `run` split. Ordinary action commands are asynchronous and their output appears in herdr logs; credential export instead opens a PTY popup so the blob is not captured in those action logs.
 
 Optional herdr keybinding (edit your own herdr config; never inserted automatically):
 
@@ -127,15 +127,22 @@ openai = "https://api.openai.com"
 gemini = "https://generativelanguage.googleapis.com"
 ```
 
-Native adapters no-op outside `HERDR_ENV=1`. Set `HERDR_RESPAN=off` in a pane to disable tracing there. Workspace pause/resume:
+Native adapters no-op outside `HERDR_ENV=1`. To turn tracing off and back on at will:
+
+| Scope | Off | On |
+|---|---|---|
+| This machine (every workspace, pane and `run`) | action **Turn Respan tracing off**, or `herdr-respan off` | **Turn Respan tracing on**, or `herdr-respan on` |
+| One workspace | action **Pause this workspace** (workspace/pane menus), or `herdr-respan pause [--workspace <id>]` | **Resume this workspace**, or `herdr-respan resume [--workspace <id>]` |
+| One pane | `HERDR_RESPAN=off` in that pane | unset it |
 
 ```sh
-herdr plugin action invoke jaredlyon.respan-adapter.pause
-herdr plugin action invoke jaredlyon.respan-adapter.resume
-# Direct CLI: pause/resume --workspace <id>
+herdr plugin action invoke jaredlyon.respan-adapter.off
+herdr plugin action invoke jaredlyon.respan-adapter.on
 ```
 
-**A busy user can exceed Respan Free's 100,000 viewable spans/month.** Model, tool, subagent and auxiliary activity can create many spans per turn. Set `tool_spans=false`, `subagent_spans=false`, `aux_spans=false` to reduce volume; pause the workspace or use `HERDR_RESPAN=off` to turn all capture off. `content_cap_bytes=0` reduces stored content but **does not reduce span count**. Status shows this host's month-to-date successfully sent spans (not an account-wide billing counter), spool depth/drops, last flush, coverage and key source. OTLP ingest does not consume model credits; provider calls made by your agents still incur their usual costs. Consult [Respan pricing](https://respan.ai/pricing) for current plan limits.
+None of these edit agent configs (`remove` does). While off, nothing new is captured and `run` launches agents directly without the proxy; spans captured before you turned it off are still delivered. Workspace pauses are kept when you switch tracing back on. The status popup shows when tracing is off.
+
+**A busy user can exceed Respan Free's 100,000 viewable spans/month.** Model, tool, subagent and auxiliary activity can create many spans per turn. Set `tool_spans=false`, `subagent_spans=false`, `aux_spans=false` to reduce volume; `herdr-respan off`, a workspace pause or `HERDR_RESPAN=off` stops capture entirely. `content_cap_bytes=0` reduces stored content but **does not reduce span count**. Status shows this host's month-to-date successfully sent spans (not an account-wide billing counter), spool depth/drops, last flush, coverage and key source. OTLP ingest does not consume model credits; provider calls made by your agents still incur their usual costs. Consult [Respan pricing](https://respan.ai/pricing) for current plan limits.
 
 Spool and operational state stay on the host. Errors-only logging uses `$HERDR_PLUGIN_STATE_DIR/herdr-respan.log` (1 MiB × 2 rotation); `HERDR_RESPAN_LOG=debug` enables debug logging. Keys/content are not intentionally logged. Keep state/config directories private and remove any manually copied export files after use.
 
@@ -170,7 +177,7 @@ This is ordered replacement with rollback, **not a reader snapshot**: during a m
 ## Troubleshooting
 
 - **Codex says awaiting trust / no Codex spans:** run setup, then open Codex **inside herdr**, use **`/hooks`**, and explicitly trust/enable the installed hooks once. Restart as Codex requests. The status popup says `awaiting Codex trust (run /hooks in Codex once)` until the first Codex span arrives; this is an observation, not an inspection of Codex's trust store. The plugin never edits that store. Existing `notify` settings are untouched.
-- **No spans:** check setup ownership, `HERDR_ENV=1`, pane opt-out/workspace pause, relocated agent config and the per-agent README. Missing hook payload/usage is not invented from terminal text.
+- **No spans:** check `herdr-respan status` (tracing on/off), setup ownership, `HERDR_ENV=1`, pane opt-out/workspace pause, relocated agent config and the per-agent README. Missing hook payload/usage is not invented from terminal text.
 - **Key not configured / flush failure:** status reports the key **source**, never the key. Check plugin `.env` and Respan API-key profile. Ready spool files survive transient flush errors; cap drops are counted. Check network/base URL without posting keys/content into issue reports.
 - **Link succeeds but commands fail:** linking validates only the manifest and does not build. Run the appropriate installer; `bin/herdr-respan.exe` must exist, be executable on Unix, and match the host OS/architecture.
 - **Popup does not open:** herdr needs an active workspace/tab/focused pane. Close any existing popup first. Large imports use noncanonical hidden input, avoiding the normal terminal's short line-buffer limit.

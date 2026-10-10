@@ -60,15 +60,27 @@ contexts = ["global", "workspace", "pane"]
 command = ["./bin/herdr-respan.exe","ui","action","run"]
 
 [[actions]]
+id = "off"
+title = "Turn Respan tracing off"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","off"]
+
+[[actions]]
+id = "on"
+title = "Turn Respan tracing on"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","on"]
+
+[[actions]]
 id = "pause"
 title = "Pause this workspace"
-contexts = ["global", "workspace", "pane"]
+contexts = ["workspace", "pane"]
 command = ["./bin/herdr-respan.exe","pause"]
 
 [[actions]]
 id = "resume"
 title = "Resume this workspace"
-contexts = ["global", "workspace", "pane"]
+contexts = ["workspace", "pane"]
 command = ["./bin/herdr-respan.exe","resume"]
 
 [[actions]]

@@ -42,7 +42,7 @@ fn credentials(paths: &Paths) -> Result<Option<config::Credentials>> {
 }
 fn dispatch(cli: Cli) -> Result<()> {
     if cli.command == Command::Help {
-        println!("herdr-respan hook <agent> | lifecycle | flush [--detach] | setup <agent>... [--all] [--dry-run] [--yes] [--project DIR] | remove <agent>... [--all] | status | pause/resume [--workspace ID] | test | startup | proxy serve | run | config export/import/push | ui <popup>");
+        println!("herdr-respan hook <agent> | lifecycle | flush [--detach] | setup <agent>... [--all] [--dry-run] [--yes] [--project DIR] | remove <agent>... [--all] | status | on | off | pause/resume [--workspace ID] | test | startup | proxy serve | run | config export/import/push | ui <popup>");
         return Ok(());
     }
     if let Command::Hook { agent } = &cli.command {
@@ -102,6 +102,7 @@ fn dispatch(cli: Cli) -> Result<()> {
             let workspace = workspace.or_else(|| std::env::var("HERDR_WORKSPACE_ID").ok()).ok_or("missing workspace")?;
             gate::pause(&paths.state, &workspace, paused)
         }
+        Command::Switch { on } => { gate::set_off(&paths.state, !on)?; println!("Respan tracing is {} on this machine", if on { "on" } else { "off" }); Ok(()) }
         Command::Test => {
             let mut ctx = record::HookCtx::new(paths.clone(),config::Config::load(&paths.config)?,"test",meta::collect(&std::env::current_dir()?),None,false)?;
             let key = format!("test:{}",record::random_id()?); let now = ctx.now_ns();

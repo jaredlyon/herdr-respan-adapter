@@ -11,7 +11,7 @@ pub fn report(paths: &Paths, credentials: Option<&Credentials>) -> Result<Value>
         json!({"kind":agent.kind,"installed":installed,"last_span_ns":last_span_ns,"agent":agent.kind,"adapter_available":true,"coverage":if installed {"adapter installed"} else {"lifecycle"}})
     }).collect();
     let flush=crate::flush::status(&paths.state);
-    Ok(json!({"agents":agents,"spool_files":files.len(),"spool_bytes":bytes,"spool_spans":spans,"dropped_files":crate::spool::dropped(&paths.state),
+    Ok(json!({"tracing":if crate::gate::is_off(&paths.state) {"off"} else {"on"},"agents":agents,"spool_files":files.len(),"spool_bytes":bytes,"spool_spans":spans,"dropped_files":crate::spool::dropped(&paths.state),
         "month":flush.month,"spans_sent_month":flush.spans_sent_month,"flush":flush,"key_source":credentials.map(|c| c.source).unwrap_or("not configured"),
         "proxy_active":crate::run::health(paths).is_some()}))
 }

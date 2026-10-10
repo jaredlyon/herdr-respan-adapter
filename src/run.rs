@@ -421,7 +421,9 @@ fn wait(command: &mut Command) -> Result<i32> {
     Ok(exit_code(child.wait()?))
 }
 pub fn run(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
-    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let mut env: BTreeMap<String, String> = std::env::vars().collect();
+    // Global `off` behaves like `HERDR_RESPAN=off`: launch the agent directly, no proxy, no spans.
+    if crate::gate::is_off(&paths.state) { env.insert("HERDR_RESPAN".into(), "off".into()); }
     // Validate the requested agent before touching daemon state.
     let mut launch = build_launch(paths, config, args, "http://127.0.0.1:0/r/validation", &env)?;
     if env.get("HERDR_RESPAN").is_some_and(|v| v == "off") {

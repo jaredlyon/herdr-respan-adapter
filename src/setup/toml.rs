@@ -18,12 +18,12 @@ fn same_value(a: &Value, b: &Value) -> bool {
         _ => false,
     }
 }
-fn parent<'a>(doc: &'a mut DocumentMut, path: &[String], create: bool) -> Result<(&'a mut Table, String, Vec<Vec<String>>)> {
+fn parent<'a>(doc: &'a mut DocumentMut, path: &[String], create: bool) -> Result<(&'a mut dyn toml_edit::TableLike, String, Vec<Vec<String>>)> {
     let (last, prefix) = path.split_last().ok_or("empty TOML path")?;
-    let mut table = doc.as_table_mut(); let mut created = Vec::new();
+    let mut table: &mut dyn toml_edit::TableLike = doc.as_table_mut(); let mut created = Vec::new();
     for (i, key) in prefix.iter().enumerate() {
         if !table.contains_key(key) { if !create { return Err("missing TOML path".into()); } table.insert(key, Item::Table(Table::new())); created.push(prefix[..=i].to_vec()); }
-        table = table.get_mut(key).and_then(Item::as_table_mut).ok_or("TOML path traverses a non-table")?;
+        table = table.get_mut(key).and_then(Item::as_table_like_mut).ok_or("TOML path traverses a non-table")?;
     }
     Ok((table, last.clone(), created))
 }
@@ -74,9 +74,25 @@ pub fn remove(doc: &mut DocumentMut, path: &[String], value: &Item, appended: bo
     let mut created = created.to_vec(); created.sort_by_key(|p| std::cmp::Reverse(p.len()));
     for path in created {
         if let Ok((table, key, _)) = parent(doc, &path, false) {
-            let empty = table.get(&key).is_some_and(|i| i.as_table().is_some_and(Table::is_empty) || i.as_array().is_some_and(|a| a.is_empty()) || i.as_array_of_tables().is_some_and(|a| a.is_empty()));
+            let empty = table.get(&key).is_some_and(|i| i.as_table_like().is_some_and(|t| t.is_empty()) || i.as_array().is_some_and(|a| a.is_empty()) || i.as_array_of_tables().is_some_and(|a| a.is_empty()));
             if empty { table.remove(&key); }
         }
     }
     Ok(())
+}
+
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn inserts_and_removes_owned_scalar_in_inline_table() {
+        let original = "features = { other = true }\n";
+        let mut doc: DocumentMut = original.parse().unwrap();
+        let path = vec!["features".into(), "hooks".into()];
+        let value = toml_edit::value(true);
+        let (added, appended, created) = insert(&mut doc, &path, &value).unwrap();
+        assert!(added);
+        assert!(!insert(&mut doc, &path, &value).unwrap().0);
+        assert!(insert(&mut doc, &path, &toml_edit::value(false)).is_err());
+        remove(&mut doc, &path, &value, appended, &created).unwrap();
+        assert_eq!(doc.to_string(), original);
+    }
 }

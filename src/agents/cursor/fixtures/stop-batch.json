@@ -1,0 +1,8 @@
+{
+  "v":1,"agent":"cursor","session_id":"synthetic-conversation","session_path":"/synthetic/transcript.jsonl","cwd":"/synthetic/repo","agent_version":"2026.04.08-a41fba1",
+  "events":[
+    {"type":"turn_start","turn_id":"synthetic-generation","ts_ns":10000000,"metadata":{"session_path":"/synthetic/transcript.jsonl","cursor.model_slug":"default"}},
+    {"type":"chat","turn_id":"synthetic-generation","id":"synthetic-generation","start_ns":10000000,"end_ns":10000000,"output":"Synthetic answer","status":"ok","usage":{"input_tokens":10129,"output_tokens":34,"cache_read_input_tokens":4608,"cache_creation_input_tokens":0},"metadata":{"session_path":"/synthetic/transcript.jsonl","cursor.model_slug":"default","cursor.usage_scope":"generation"}},
+    {"type":"turn_end","turn_id":"synthetic-generation","ts_ns":10000000,"output":"Synthetic answer","status":"ok"}
+  ]
+}

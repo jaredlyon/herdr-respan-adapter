@@ -164,3 +164,27 @@ fn background_child_keeps_spawning_turn_after_next_prompt() {
     process(&mut ctx,&end).unwrap();
     let all=records(&ctx);assert_eq!(all.len(),2);assert!(all.iter().all(|r|r.trace_key.as_deref()==Some("qwen:s:t1")));
 }
+
+
+#[test]
+fn fixture_translates_to_exact_golden_events() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let path=tmp.path.join("root.jsonl");let child=tmp.path.join("agent-Explorer-test.jsonl");
+    std::fs::write(&path,"").unwrap();std::fs::write(&child,include_str!("fixtures/agent-Explorer-test.jsonl")).unwrap();
+    std::fs::write(child.with_extension("meta.json"),include_str!("fixtures/agent-Explorer-test.meta.json")).unwrap();
+    // Hold only the assembler lock to inspect its scrubbed pending bridge batches.
+    let lock=ctx.state_dir().join("bridge.lock");std::fs::write(&lock,b"fixture-lock").unwrap();
+    let hooks:Vec<Value>=serde_json::from_str(include_str!("fixtures/hooks.json")).unwrap();
+    for (i,mut p) in hooks.into_iter().enumerate() {
+        p["transcript_path"]=json!(path);if p.get("agent_transcript_path").is_some() {p["agent_transcript_path"]=json!(child);}
+        if i==2 {std::fs::write(&path,include_str!("fixtures/transcript.jsonl")).unwrap();}
+        process(&mut ctx,&p).unwrap();
+    }
+    let mut pending=std::fs::read_dir(ctx.state_dir()).unwrap().map(|e|e.unwrap().path()).filter(|p|p.file_name().unwrap().to_string_lossy().starts_with("pending-")).collect::<Vec<_>>();pending.sort();
+    let events=pending.iter().flat_map(|p| {
+        let envelope:Value=serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+        let batch:Batch=serde_json::from_value(envelope["batch"].clone()).unwrap();batch.events
+    }).collect::<Vec<_>>();
+    let expected:Batch=serde_json::from_str(include_str!("fixtures/expected-batch.json")).unwrap();
+    assert_eq!(serde_json::to_value(events).unwrap(),serde_json::to_value(expected.events).unwrap());
+    std::fs::remove_file(lock).unwrap();
+}

@@ -23,8 +23,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Cli> {
     while let Some(arg) = args.next() {
         if arg == "--" { rest.push(arg); rest.extend(args); break; }
         match arg.as_str() {
-            "--state-dir" => state_dir = Some(PathBuf::from(args.next().ok_or("missing state directory")?)),
-            "--config-dir" => config_dir = Some(PathBuf::from(args.next().ok_or("missing config directory")?)),
+            "--state-dir" => state_dir = Some(PathBuf::from(args.next().filter(|s| !["--state-dir", "--config-dir", "--"].contains(&s.as_str())).ok_or("missing state directory")?)),
+            "--config-dir" => config_dir = Some(PathBuf::from(args.next().filter(|s| !["--state-dir", "--config-dir", "--"].contains(&s.as_str())).ok_or("missing config directory")?)),
             _ => rest.push(arg),
         }
     }
@@ -93,6 +93,15 @@ pub const KINDS: &[&str] = &["claude", "codex", "omp", "pi", "gemini", "opencode
 
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn directory_values_do_not_consume_flags() {
+        for (flag, message) in [("--state-dir", "missing state directory"), ("--config-dir", "missing config directory")] {
+            for next in ["--state-dir", "--config-dir", "--"] {
+                let args = ["off", flag, next].map(str::to_string);
+                assert_eq!(parse(args).unwrap_err().to_string(), message);
+            }
+            assert!(parse(["off", flag, "./--config-dir"].map(str::to_string)).is_ok());
+        }
+    }
     #[test] fn commands() {
         for args in ["hook claude --state-dir /s --config-dir /c", "flush --detach", "setup --all --dry-run", "remove codex", "pause --workspace w", "resume", "on", "off", "lifecycle", "status", "test", "startup", "proxy serve", "run claude -- -p hi", "run --protocol openai -- echo hi", "config push spark", "ui status"] {
             assert!(parse(args.split_whitespace().map(str::to_string)).is_ok(), "{args}");

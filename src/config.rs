@@ -48,10 +48,14 @@ pub fn credentials(config_dir: &Path, home: &Path, env_key: Option<String>) -> R
         }
     }
     let root = home.join(".respan");
-    let profile = std::fs::read(root.join("config.json")).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-        .and_then(|v| v.get("activeProfile").and_then(|v| v.as_str()).map(str::to_string)).unwrap_or_else(|| "default".into());
-    if let Ok(bytes) = std::fs::read(root.join("credentials.json")) {
-        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
+    // A broken profile store is not an authoritative key; continue to the environment.
+    let profile = match std::fs::read(root.join("config.json")) {
+        Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).ok().map(|v| v.get("activeProfile").and_then(|v| v.as_str()).unwrap_or("default").to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some("default".into()),
+        Err(_) => None,
+    };
+    let value = std::fs::read(root.join("credentials.json")).ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    if let (Some(profile), Some(value)) = (profile, value) {
         if let Some(cred) = value.get(&profile).filter(|c| c.get("type").and_then(|v| v.as_str()) == Some("api_key")) {
             if let Some(key) = cred.get("apiKey").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                 return Ok(Some(Credentials { key: key.into(), source: "Respan active profile" }));
@@ -76,6 +80,16 @@ pub fn dotenv(text: &str) -> BTreeMap<String, String> {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn broken_profile_stores_fall_back_to_env() {
+        let tmp = crate::tests::Temp::new(); let root = tmp.path.join(".respan");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("credentials.json"), "bad-json").unwrap();
+        assert_eq!(credentials(&tmp.path.join("cfg"), &tmp.path, Some("env".into())).unwrap().unwrap().source, "RESPAN_API_KEY");
+        assert!(credentials(&tmp.path.join("cfg"), &tmp.path, None).unwrap().is_none());
+        std::fs::write(root.join("config.json"), "bad-json").unwrap();
+        std::fs::write(root.join("credentials.json"), r#"{"default":{"type":"api_key","apiKey":"profile"}}"#).unwrap();
+        assert_eq!(credentials(&tmp.path.join("cfg"), &tmp.path, Some("env".into())).unwrap().unwrap().key, "env");
+    }
     #[test] fn precedence_and_defaults() {
         let tmp = crate::tests::Temp::new(); let cfg = tmp.path.join("cfg"); let home = tmp.path.join("home");
         std::fs::create_dir_all(home.join(".respan")).unwrap(); std::fs::create_dir_all(&cfg).unwrap();

@@ -162,7 +162,7 @@ fn setup_roundtrip(project: bool) {
 }
 
 #[test]
-fn setup_preserves_herdr_and_foreign_entries() { setup_roundtrip(false); setup_roundtrip(true); }
+fn setup_preserves_herdr_and_foreign_entries() { setup_roundtrip(true); }
 
 #[test]
 fn protocol_child() {
@@ -207,6 +207,15 @@ fn relocated_config_directory() {
     let result = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "agents::cursor::tests::protocol_child"])
         .env("CURSOR_TEST_CHILD", "setup").env("CURSOR_CONFIG_DIR", tmp.path.join("relocated"))
+        .output().unwrap();
+    assert!(result.status.success(), "{:?}", result);
+}
+
+#[test]
+fn default_config_directory_isolated_from_real_environment() {
+    let result = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "agents::cursor::tests::protocol_child"])
+        .env("CURSOR_TEST_CHILD", "setup").env_remove("CURSOR_CONFIG_DIR")
         .output().unwrap();
     assert!(result.status.success(), "{:?}", result);
 }

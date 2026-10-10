@@ -347,11 +347,17 @@ async fn handle(
     let capture = Arc::new(Mutex::new(Some(Vec::new())));
     let (mut parts, body) = request.into_parts();
     parts.uri = uri;
-    // Host alone must name the upstream. Auth, beta, account and custom headers stay untouched.
+    // Host names the upstream; HTTP compression is disabled for plaintext observation.
     if let Some(authority) = parts.uri.authority() {
         if let Ok(host) = authority.as_str().parse() {
             parts.headers.insert(hyper::header::HOST, host);
         }
+    }
+    if !websocket {
+        parts.headers.insert(
+            hyper::header::ACCEPT_ENCODING,
+            hyper::header::HeaderValue::from_static("identity"),
+        );
     }
     let outgoing = Request::from_parts(
         parts,

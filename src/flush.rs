@@ -27,27 +27,32 @@ fn run_with_agents(paths:&Paths,config:&Config,creds:Option<&Credentials>,agents
     let Some(lock) = crate::spool::Lock::acquire(&paths.state)? else { return Ok(()); };
     let mut info = status(&paths.state);
     let mut held_files=BTreeSet::new();
+    let mut retries=3;let mut settlement_exhausted=false;
     let result = (|| {
         loop {
-            let deferred=settle_agents(paths,config,agents,&lock,&mut wait)?;
+            let deferred=settle_agents(paths,config,agents,&lock,&mut retries,&mut wait)?;
             held_files=drain(paths,config,creds,&lock,&mut info)?;
             let sendable=crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p));
             let bridge_pending=crate::agents::common::bridge::has_pending(&paths.state)?||crate::lifecycle::has_pending(&paths.state)?;
             let native_pending=crate::spool::has_settle_pending(&paths.state);
             if !sendable&&!bridge_pending&&!deferred&&!native_pending {return Ok(());}
-            if deferred||native_pending {wait(Duration::from_secs(2));}
+            if deferred||native_pending {
+                if retries==0 {settlement_exhausted=true;return Ok(());}
+                retries-=1;wait(Duration::from_secs(2));
+            }
             else if !sendable {wait(Duration::from_millis(1));}
         }
     })();
     info.last_flush_ns = crate::record::now_ns();
     info.last_result = if result.is_ok() { "ok" } else { "failed (records retained)" }.into();
+    if result.is_err() {crate::log::error(&paths.state,"flush failed (records retained)");}
     crate::paths::atomic_json(&paths.state.join("status.json"), &info)?;
     drop(lock);
-    if result.is_ok() && (crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p)) || crate::agents::common::bridge::has_pending(&paths.state)? || crate::spool::has_settle_pending(&paths.state) || crate::lifecycle::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
+    if result.is_ok() && !settlement_exhausted && (crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p)) || crate::agents::common::bridge::has_pending(&paths.state)? || crate::spool::has_settle_pending(&paths.state) || crate::lifecycle::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
     result
 }
-fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,mut wait:impl FnMut(Duration))->Result<bool> {
-    for round in 0..3 {
+fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,retries:&mut usize,mut wait:impl FnMut(Duration))->Result<bool> {
+    loop {
         let mut pending=false;
         for agent in agents {
             let Some(settle)=agent.settle else {continue;};
@@ -61,8 +66,8 @@ fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],
             }
             pending|=marker.exists();
         }
-        if !pending||round==2 {return Ok(pending);}wait(Duration::from_secs(2));
-    }Ok(false)
+        if !pending||*retries==0 {return Ok(pending);}*retries-=1;wait(Duration::from_secs(2));
+    }
 }
 
 fn drain(paths:&Paths,config:&Config,creds:Option<&Credentials>,lock:&crate::spool::Lock,info:&mut FlushStatus)->Result<BTreeSet<PathBuf>> {
@@ -180,11 +185,18 @@ fn month(seconds: u64) -> String {
     #[test] fn settlement_retries_three_rounds_before_sending() {
         let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let config=Config::default();let agents=[spec("settler",settling),spec("never",never_ready),spec("absent",settle_error)];
         for kind in ["settler","never"] {let ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),kind,Default::default(),None,false).unwrap();ctx.mark_settle_pending().unwrap();}let lock=crate::spool::Lock::acquire(&paths.state).unwrap().unwrap();let mut waits=Vec::new();
-        settle_agents(&paths,&config,&agents,&lock,|d|waits.push(d)).unwrap();assert_eq!(waits,vec![Duration::from_secs(2),Duration::from_secs(2)]);
+        settle_agents(&paths,&config,&agents,&lock,&mut 2,|d|waits.push(d)).unwrap();assert_eq!(waits,vec![Duration::from_secs(2),Duration::from_secs(2)]);
         for kind in ["settler","never"] {let bytes=std::fs::read(paths.state.join("agents").join(kind).join("settle-count")).unwrap();assert_eq!(serde_json::from_slice::<u64>(&bytes).unwrap(),3);}
         assert!(!paths.state.join("agents/absent").exists());assert!(!paths.state.join("agents/settler/settle-pending").exists());assert!(paths.state.join("agents/never/settle-pending").exists());let ready=crate::spool::ready(&paths.state).unwrap();assert_eq!(ready.len(),1);let rec:SpanRecord=serde_json::from_slice(&std::fs::read(&ready[0]).unwrap()).unwrap();assert_eq!(rec.span_key,"settled");
-        let mut waits=Vec::new();settle_agents(&paths,&config,&[spec("settler",settling)],&lock,|d|waits.push(d)).unwrap();assert!(waits.is_empty());
-        std::fs::create_dir_all(paths.state.join("agents/error")).unwrap();assert!(settle_agents(&paths,&config,&[spec("error",settle_error)],&lock,|_|{}).is_err());
+        let mut waits=Vec::new();settle_agents(&paths,&config,&[spec("settler",settling)],&lock,&mut 2,|d|waits.push(d)).unwrap();assert!(waits.is_empty());
+        std::fs::create_dir_all(paths.state.join("agents/error")).unwrap();assert!(settle_agents(&paths,&config,&[spec("error",settle_error)],&lock,&mut 2,|_|{}).is_err());
+    }
+    #[test] fn sender_exhausts_one_retry_budget_and_keeps_pending_for_later_flush() {
+        let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let config=Config::default();
+        let ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),"never",Default::default(),None,false).unwrap();ctx.mark_settle_pending().unwrap();let marker=ctx.state_dir().join("settle-pending");let before=std::fs::read(&marker).unwrap();let mut waits=Vec::new();
+        run_with_agents(&paths,&config,None,&[spec("never",never_ready)],|d|waits.push(d)).unwrap();
+        assert_eq!(waits,vec![Duration::from_secs(2);3]);assert_eq!(ctx.load::<u64>("settle-count").unwrap(),4);assert_eq!(std::fs::read(&marker).unwrap(),before);
+        run_with_agents(&paths,&config,None,&[spec("never",never_ready)],|_|{}).unwrap();assert_eq!(ctx.load::<u64>("settle-count").unwrap(),8);assert!(marker.exists());
     }
     #[test] fn utc_month_rollover_and_successful_send_counter() {
         let mut status=FlushStatus::default();status.sent(2,1706745599);assert_eq!(status.month,"2024-01");assert_eq!(status.spans_sent_month,2);
@@ -195,7 +207,7 @@ fn month(seconds: u64) -> String {
     #[test] fn settlement_preserves_newly_queued_marker_generation() {
         fn new_queue(ctx:&mut crate::record::HookCtx)->Result<bool> {ctx.mark_settle_pending()?;Ok(false)}
         let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let config=Config::default();let ctx=crate::record::HookCtx::new(paths.clone(),config.clone(),"new-queue",Default::default(),None,false).unwrap();ctx.mark_settle_pending().unwrap();let marker=ctx.state_dir().join("settle-pending");let before=std::fs::read(&marker).unwrap();let lock=crate::spool::Lock::acquire(&paths.state).unwrap().unwrap();
-        settle_agents(&paths,&config,&[spec("new-queue",new_queue)],&lock,|_|{}).unwrap();assert_ne!(std::fs::read(marker).unwrap(),before);
+        settle_agents(&paths,&config,&[spec("new-queue",new_queue)],&lock,&mut 2,|_|{}).unwrap();assert_ne!(std::fs::read(marker).unwrap(),before);
     }
 
 }
@@ -277,6 +289,7 @@ fn month(seconds: u64) -> String {
         let config=Config {base_url:format!("http://{address}"),..Default::default()};
         assert!(run(&paths,&config,None).is_err());assert!(run(&paths,&config,Some(&key())).is_err());assert_eq!(crate::spool::ready(&paths.state).unwrap().len(),1);
         assert_eq!(status(&paths.state).last_result,"failed (records retained)");
+        let log=std::fs::read_to_string(paths.state.join("herdr-respan.log")).unwrap();assert_eq!(log.matches("[ERROR] flush failed (records retained)").count(),2);
     }
     fn register(paths:&Paths,run:&str) {crate::paths::atomic_json(&paths.state.join("proxy/runs").join(format!("{run}.json")),&serde_json::json!({})).unwrap();}
     fn turn(ctx:&mut HookCtx,id:&str,start:u64,end:Option<u64>) {

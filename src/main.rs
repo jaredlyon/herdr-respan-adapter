@@ -28,23 +28,28 @@ fn run_args(args: Vec<String>) -> i32 {
     if fail_open {
         // Silence panic payloads: adapter panics may contain agent content or credentials.
         std::panic::set_hook(Box::new(|_| {}));
-        let result = std::panic::catch_unwind(|| cli::parse(args).and_then(dispatch));
+        let mut state = None;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cli::parse(args).and_then(|cli| dispatch(cli, Some(&mut state)))));
         if !matches!(result, Ok(Ok(()))) {
-            if let Ok(paths) = Paths::resolve(None, None) { log::error(&paths.state,"hook failed (agent unaffected)"); }
+            if let Some(state) = state.or_else(|| Paths::resolve(None, None).ok().map(|paths| paths.state)) {
+                log::error(&state,"hook failed (agent unaffected)");
+            }
         }
         0
     } else {
-        match cli::parse(args).and_then(dispatch) { Ok(()) => 0, Err(e) => { eprintln!("{e}"); 1 } }
+        match cli::parse(args).and_then(|cli| dispatch(cli, None)) { Ok(()) => 0, Err(e) => { eprintln!("{e}"); 1 } }
     }
 }
 fn credentials(paths: &Paths) -> Result<Option<config::Credentials>> {
     config::credentials(&paths.config, &paths::home()?, std::env::var("RESPAN_API_KEY").ok())
 }
-fn dispatch(cli: Cli) -> Result<()> {
+fn dispatch(cli: Cli, invocation_state: Option<&mut Option<std::path::PathBuf>>) -> Result<()> {
     if cli.command == Command::Help {
         println!("herdr-respan hook <agent> | lifecycle | flush [--detach] | setup <agent>... [--all] [--dry-run] [--yes] [--project DIR] | remove <agent>... [--all] | status | on | off | pause/resume [--workspace ID] | test | startup | proxy serve | run | config export/import/push | ui <popup>");
         return Ok(());
     }
+    let resolved = Paths::resolve(cli.state_dir, cli.config_dir);
+    if let (Some(state), Ok(paths)) = (invocation_state, &resolved) { *state = Some(paths.state.clone()); }
     if let Command::Hook { agent } = &cli.command {
         const MAX: usize = 32 * 1024 * 1024;
         let mut payload = Vec::new(); std::io::stdin().take(MAX as u64 + 1).read_to_end(&mut payload)?;
@@ -53,10 +58,10 @@ fn dispatch(cli: Cli) -> Result<()> {
             let mut out = std::io::stdout(); out.write_all(reply(&payload).as_bytes())?; out.flush()?;
         }
         if payload.len() > MAX { return Err("hook payload too large".into()); }
-        let paths = Paths::resolve(cli.state_dir, cli.config_dir)?;
+        let paths = resolved?;
         return hook(&paths, agent, &payload);
     }
-    let paths = Paths::resolve(cli.state_dir, cli.config_dir)?;
+    let paths = resolved?;
     match cli.command {
         Command::Hook { .. } => unreachable!(),
         Command::Lifecycle => {
@@ -81,7 +86,15 @@ fn dispatch(cli: Cli) -> Result<()> {
                     Ok(["y","yes"].contains(&answer.trim().to_ascii_lowercase().as_str()))
                 })?;
             }
-            for (agent, plan) in selected.iter().zip(&plans) { print!("{}", setup::preview(&ctx, agent.kind, plan)?); }
+            let mut ready = Vec::new();
+            for (agent, plan) in selected.into_iter().zip(plans) {
+                match setup::preview(&ctx, agent.kind, &plan) {
+                    Ok(preview) => { print!("{preview}"); ready.push((agent, plan)); }
+                    Err(e) if all => println!("Skipping {}: {e}", agent.display),
+                    Err(e) => return Err(e),
+                }
+            }
+            if ready.is_empty() { return Err("nothing to set up".into()); }
             if dry_run { return Ok(()); }
             if !yes {
                 print!("Apply these edits? [y/N] "); std::io::stdout().flush()?;
@@ -89,7 +102,7 @@ fn dispatch(cli: Cli) -> Result<()> {
                 if !["y", "yes"].contains(&answer.trim().to_ascii_lowercase().as_str()) { return Ok(()); }
             }
             setup::refresh_binary(&paths)?;
-            for (agent, plan) in selected.iter().zip(&plans) { setup::apply(&ctx, agent.kind, plan)?; }
+            for (agent, plan) in &ready { setup::apply(&ctx, agent.kind, plan)?; }
             Ok(())
         }
         Command::Remove { agents, all, project } => {
@@ -118,8 +131,15 @@ fn dispatch(cli: Cli) -> Result<()> {
         }
         Command::Proxy => proxy::serve(&paths, &config::Config::load(&paths.config)?),
         Command::Run { args } => run::run(&paths, &config::Config::load(&paths.config)?, &args),
-        Command::Config { args } => remote::config(&paths, &config::Config::load(&paths.config)?, &args),
-        Command::Ui { args } => ui::popup(&paths, &config::Config::load(&paths.config)?, &args),
+        Command::Config { args } => {
+            let config = if args.first().is_some_and(|s| s == "export" || s == "push") { config::Config::load(&paths.config)? } else { config::Config::default() };
+            remote::config(&paths, &config, &args)
+        }
+        Command::Ui { args } => {
+            let popup = args.strip_prefix(&["popup".into()]).unwrap_or(&args);
+            let config = if popup.first().is_some_and(|s| ["export", "push", "launch"].contains(&s.as_str())) { config::Config::load(&paths.config)? } else { config::Config::default() };
+            ui::popup(&paths, &config, &args)
+        }
         Command::Help => unreachable!(),
     }
 }
@@ -134,8 +154,8 @@ fn hook(paths: &Paths, agent: &str, payload: &[u8]) -> Result<()> {
     if !cfg!(test) { spool::spawn_flush(paths)?; }
     result
 }
-/// `--all` means every agent detected on this machine; an agent whose setup refuses (e.g. missing Kimi Code) is
-/// skipped with its reason. Explicitly named agents are always attempted and any refusal is an error.
+/// `--all` means every detected agent; plan and preview refusals skip that agent with a reason.
+/// Explicitly named agents are always attempted and any refusal is an error.
 fn plans(ctx: &setup::SetupCtx, home: &std::path::Path, names: &[String], all: bool) -> Result<(Vec<&'static agents::AgentSpec>, Vec<setup::Plan>)> {
     let candidates: Vec<&'static agents::AgentSpec> = if all {
         agents::AGENTS.iter().filter(|a| setup::detect::detected(a.kind, home)).collect()
@@ -165,6 +185,9 @@ fn plans(ctx: &setup::SetupCtx, home: &std::path::Path, names: &[String], all: b
     impl Drop for Temp { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.path); } }
     #[test] fn fake_hook_child() {
         if std::env::var("HERDR_RESPAN_TEST_CHILD").ok().as_deref() != Some("1") { return; }
+        if let Ok(args) = std::env::var("HERDR_RESPAN_TEST_ARGS") {
+            assert_eq!(run_args(serde_json::from_str(&args).unwrap()), 0); return;
+        }
         let agent = std::env::var("HERDR_RESPAN_TEST_AGENT").unwrap_or_else(|_| "fake".into());
         let args = if agent == "malformed" { vec!["hook".into()] } else if agent == "lifecycle" {
             let mut event=String::new();std::io::stdin().read_to_string(&mut event).unwrap();std::env::set_var("HERDR_PLUGIN_EVENT_JSON",event); vec!["lifecycle".into()]
@@ -214,5 +237,42 @@ fn plans(ctx: &setup::SetupCtx, home: &std::path::Path, names: &[String], all: b
         assert_eq!(rec.metadata["herdr.machine"],"test-host");assert!(!rec.metadata.contains_key("cwd"));
         child(&tmp,"lifecycle","1",status("working").as_bytes(),"");
         child(&tmp,"lifecycle","1",br#"{"event":"pane_exited","data":{"type":"pane_exited","pane_id":"p","workspace_id":"w"}}"#,"");assert_eq!(spool::ready(&tmp.path.join("state")).unwrap().len(),2);
+    }
+    fn command_child(tmp: &Temp, args: &[String], input: &[u8]) -> std::process::Output {
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact", "tests::fake_hook_child", "--nocapture"]).env_clear()
+            .env("HOME", tmp.path.join("home")).env("USERPROFILE", tmp.path.join("home"))
+            .env("PATH", "/nonexistent").env("HERDR_ENV", "1").env("HERDR_RESPAN_TEST_CHILD", "1")
+            .env("HERDR_RESPAN_TEST_ARGS", serde_json::to_string(args).unwrap())
+            .env("HERDR_PLUGIN_STATE_DIR", tmp.path.join("state")).env("HERDR_PLUGIN_CONFIG_DIR", tmp.path.join("config"))
+            .current_dir(&tmp.path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().unwrap(); child.stdin.take().unwrap().write_all(input).unwrap(); child.wait_with_output().unwrap()
+    }
+    #[test] fn fail_open_logs_to_explicit_state() {
+        let tmp = Temp::new(); let state = tmp.path.join("explicit-state");
+        let args = vec!["hook".into(), "omp".into(), "--state-dir".into(), state.to_string_lossy().into_owned()];
+        assert!(command_child(&tmp, &args, b"bad-json").status.success());
+        assert!(std::fs::read_to_string(state.join("herdr-respan.log")).unwrap().contains("hook failed (agent unaffected)"));
+        assert!(!tmp.path.join("state/herdr-respan.log").exists());
+    }
+    #[test] fn valid_import_replaces_broken_existing_config() {
+        for args in [vec!["config".into(), "import".into()], vec!["ui".into(), "popup".into(), "import".into()]] {
+            let tmp = Temp::new(); let cfg = tmp.path.join("config"); std::fs::create_dir_all(&cfg).unwrap();
+            std::fs::write(cfg.join("config.toml"), "not valid TOML !!!").unwrap();
+            let text = "content_cap_bytes = 42\n";
+            let blob = remote::encode(&serde_json::to_vec(&serde_json::json!({"v":1,"config":text,"dotenv":""})).unwrap());
+            let input = if args[0] == "ui" { format!("y\n{blob}") } else { blob };
+            assert!(command_child(&tmp, &args, input.as_bytes()).status.success());
+            assert_eq!(std::fs::read_to_string(cfg.join("config.toml")).unwrap(), text);
+        }
+    }
+    #[test] fn setup_all_skips_preview_failure_but_explicit_errors() {
+        let tmp = Temp::new(); let home = tmp.path.join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap(); std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".codex/hooks.json"), "bad-json").unwrap();
+        let output = command_child(&tmp, &["setup".into(), "--all".into(), "--yes".into()], b"");
+        assert!(output.status.success()); assert!(String::from_utf8(output.stdout).unwrap().contains("Skipping Codex:"));
+        assert!(home.join(".claude/settings.json").exists());
+        assert!(!command_child(&tmp, &["setup".into(), "codex".into(), "--yes".into()], b"").status.success());
     }
 }

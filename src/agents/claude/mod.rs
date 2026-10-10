@@ -239,7 +239,8 @@ fn settle(file:&mut Transcript,events:&mut Vec<Event>) {
 fn close_turn(state:&mut Session,now:u64,force:bool,events:&mut Vec<Event>) {
     for file in state.files.values_mut() {
         let ended=state.stopped.is_some() || file.parent.as_ref().is_some_and(|id|state.children.get(id).is_some_and(|c|c.end.is_some()));
-        if file.current.is_some() && (force || (ended && (file.current.as_ref().is_some_and(|r|r.finished) && now.saturating_sub(file.stable_since)>=100_000_000))) {settle(file,events);}
+        let failed_main=file.parent.is_none() && state.stopped.is_some() && state.error.is_some();
+        if file.current.is_some() && (force || failed_main || (ended && (file.current.as_ref().is_some_and(|r|r.finished) && now.saturating_sub(file.stable_since)>=100_000_000))) {settle(file,events);}
     }
     for (id,child) in &mut state.children {
         if !child.completed && child.announced && child.end.is_some() && child.path.as_ref().is_some_and(|p|state.files.get(p).is_some_and(|f|f.cursor.offset>0 && f.current.is_none())) {

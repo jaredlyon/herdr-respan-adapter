@@ -39,7 +39,9 @@ requirement; it does not install or upgrade pi. Restart/reload pi after setup.
   receives its own turn and one delivery process.
 
 The gate matches herdr's pi asset: `HERDR_ENV=1`, socket/pane ids present and
-`ctx.mode=tui` (not headless print/RPC). `HERDR_RESPAN=off` drops collection at
+`ctx.mode=tui|print` (not RPC). Print-mode invocations inside a real herdr
+pane are traced; herdr's interactive state-reporting restriction is not a tracing
+restriction. `HERDR_RESPAN=off` drops collection at
 startup/delivery; workspace pause is enforced by Rust before ingestion.
 `HERDR_RESPAN_PROXY=1` or a selected model base URL containing `api.respan.ai`
 suppresses native chat spans, leaving turn/tool spans. Core repeats suppression.
@@ -57,8 +59,8 @@ Native message completion measures logical requests, not every provider HTTP
 retry or all auxiliary/compaction model calls; use the proxy for that fidelity.
 The extension buffers content in process until settlement. Abrupt process death
 before delivery loses that batch. The detached child ignores stdout/stderr and
-fails open if the binary is missing. No live-runtime or hook-latency claim is
-made by synthetic replay tests. Agent version is unknown in the batch because
+fails open if the binary is missing. The loopback E2E below qualifies real print-mode runtime behavior, not
+hook latency or real-provider behavior. Agent version is unknown in the batch because
 the event context has no documented version field.
 
 ## Fixtures and source provenance
@@ -84,3 +86,38 @@ batch through the real bridge, checks the resulting spool tree, duplicate and
 foreign-payload rejection, proxy suppression, relocation, non-destructive setup
 and removal. The Bun replay checks batch shape, once-at-settlement delivery,
 usage/cost, gates, manual compaction failure and fail-open callbacks.
+
+
+## Real binary E2E
+
+Qualified pi 1.1.0 on Linux aarch64 with
+`HRA_BIN=target/release/herdr-respan bash scripts/e2e/run_pi.sh` (use an absolute
+binary path when overriding `HRA_BIN`). The driver isolates HOME/XDG and
+`PI_CODING_AGENT_DIR`, uses an explicit dummy-key OpenAI Chat mock provider,
+`--offline --no-approve -p --tools bash`, and retains evidence under
+`~/.hra-e2e/pi/run-*`. It creates/stops only `hra-e2e-pi` and its loopback mocks.
+
+The received tree is one turn + one chat for text, and one turn + two chats +
+one bash tool for the harmless echo. Assertions bind chats to all three native
+completed-assistant messages, check parentage, exact usage, thread ids and
+herdr pane/workspace/machine metadata, and reject duplicate/orphan spans. pi
+reports **input=8, output=7, cacheRead=3, cacheWrite=0, reasoning=0**: its OpenAI
+adapter subtracts the 3 cached tokens from mock prompt_tokens=11. These are the
+native exposed counters, not invented total-input=11. Model-rate cost is zero
+for the mock model. The same tool run outside herdr makes two local inference
+requests but no OTLP delivery. Removal retains provider/settings JSON values
+and the foreign capture extension, deleting only the owned observer.
+
+`fixtures/live-print-tool.json` is **captured live 2026-10-09** from pi 1.1.0
+against `scripts/e2e/mock_provider.py`, artifacts
+`~/.hra-e2e/pi/run-dgQCKkas/native.jsonl`. It retains only observer-consumed event
+and message fields for the tool turn; generated system instructions, session
+paths and machine-specific context are omitted/scrubbed. No real keys or user
+content are present. The Bun regression replays these events in both print and
+TUI modes, proving zero-start-usage is not emitted and only settlement delivers
+the completed usage + echo result.
+
+Mocks do not qualify subscription auth, real provider retries/auxiliary calls,
+real Respan ingestion, latency, native subagent lifecycles, or abrupt-kill
+recovery. TUI is fixture-replayed, not interactively driven by this print-mode
+E2E.

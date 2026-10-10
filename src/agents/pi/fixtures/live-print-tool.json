@@ -1,0 +1,302 @@
+[
+  {
+    "type": "before_agent_start",
+    "prompt": "RUN_TOOL: execute echo hra-e2e then reply.",
+    "at_ms": 1791597007874
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "system",
+      "content": ""
+    },
+    "at_ms": 1791597007875
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "system",
+      "content": ""
+    },
+    "at_ms": 1791597007875
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ]
+    },
+    "at_ms": 1791597007875
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "RUN_TOOL: execute echo hra-e2e then reply."
+        }
+      ]
+    },
+    "at_ms": 1791597007875
+  },
+  {
+    "type": "context",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "RUN_TOOL: execute echo hra-e2e then reply."
+          }
+        ]
+      }
+    ],
+    "at_ms": 1791597007876
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "assistant",
+      "content": [],
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "pending"
+    },
+    "at_ms": 1791597007893
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_hra_2",
+          "name": "bash",
+          "arguments": {
+            "command": "echo hra-e2e"
+          }
+        }
+      ],
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+        "input": 8,
+        "output": 7,
+        "cacheRead": 3,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 18,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "toolUse",
+      "responseId": "chatcmpl_hra_2"
+    },
+    "at_ms": 1791597007897
+  },
+  {
+    "type": "tool_execution_start",
+    "toolCallId": "call_hra_2",
+    "toolName": "bash",
+    "args": {
+      "command": "echo hra-e2e"
+    },
+    "at_ms": 1791597007897
+  },
+  {
+    "type": "tool_execution_end",
+    "toolCallId": "call_hra_2",
+    "toolName": "bash",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "hra-e2e\n"
+        }
+      ],
+      "structuredContent": {
+        "output": "hra-e2e\n",
+        "truncated": false,
+        "exit_code": 0,
+        "wall_time_seconds": 0
+      }
+    },
+    "isError": false,
+    "at_ms": 1791597007904
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "toolResult",
+      "content": [
+        {
+          "type": "text",
+          "text": "hra-e2e\n"
+        }
+      ]
+    },
+    "at_ms": 1791597007904
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "toolResult",
+      "content": [
+        {
+          "type": "text",
+          "text": "hra-e2e\n"
+        }
+      ]
+    },
+    "at_ms": 1791597007904
+  },
+  {
+    "type": "context",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "RUN_TOOL: execute echo hra-e2e then reply."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "call_hra_2",
+            "name": "bash",
+            "arguments": {
+              "command": "echo hra-e2e"
+            }
+          }
+        ],
+        "provider": "mock",
+        "model": "mock-model",
+        "usage": {
+          "input": 8,
+          "output": 7,
+          "cacheRead": 3,
+          "cacheWrite": 0,
+          "reasoning": 0,
+          "totalTokens": 18,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          }
+        },
+        "stopReason": "toolUse",
+        "responseId": "chatcmpl_hra_2"
+      },
+      {
+        "role": "toolResult",
+        "toolCallId": "call_hra_2",
+        "toolName": "bash",
+        "content": [
+          {
+            "type": "text",
+            "text": "hra-e2e\n"
+          }
+        ],
+        "isError": false
+      }
+    ],
+    "at_ms": 1791597007905
+  },
+  {
+    "type": "message_start",
+    "message": {
+      "role": "assistant",
+      "content": [],
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "pending"
+    },
+    "at_ms": 1791597007907
+  },
+  {
+    "type": "message_end",
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "hra-e2e mock response"
+        }
+      ],
+      "provider": "mock",
+      "model": "mock-model",
+      "usage": {
+        "input": 8,
+        "output": 7,
+        "cacheRead": 3,
+        "cacheWrite": 0,
+        "reasoning": 0,
+        "totalTokens": 18,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "responseId": "chatcmpl_hra_3"
+    },
+    "at_ms": 1791597007907
+  },
+  {
+    "type": "agent_settled",
+    "aborted": false,
+    "at_ms": 1791597007908
+  }
+]

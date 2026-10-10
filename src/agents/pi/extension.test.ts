@@ -65,7 +65,7 @@ test("native fixture emits exactly the golden bridge batch once at settlement", 
   expect(h.batches).toHaveLength(1);
 });
 
-test("herdr and TUI gates leave no batch; opt-out before delivery drops buffered content", () => {
+test("herdr and RPC gates leave no batch; opt-out before delivery drops buffered content", () => {
   for (const key of ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID"]) {
     const saved = process.env[key];
     delete process.env[key];
@@ -75,7 +75,7 @@ test("herdr and TUI gates leave no batch; opt-out before delivery drops buffered
   process.env.HERDR_RESPAN = "off";
   expect(Object.keys(harness().handlers)).toHaveLength(0);
   delete process.env.HERDR_RESPAN;
-  for (const mode of ["rpc", "print"]) {
+  for (const mode of ["rpc"]) {
     const h = harness(mode);
     for (const event of fixture) h.emit(event);
     expect(h.batches).toHaveLength(0);
@@ -129,4 +129,34 @@ test("observer failures never escape into pi", () => {
   h.ctx.sessionManager.getSessionId = () => { throw new Error("synthetic session failure"); };
   expect(() => h.emit(fixture[0])).not.toThrow();
   expect(h.batches).toHaveLength(0);
+});
+
+
+test("captured pi 1.1.0 print-mode tool turn retains completed usage at settlement", async () => {
+  const live: NativeEvent[] = await Bun.file(new URL("./fixtures/live-print-tool.json", import.meta.url)).json();
+  for (const mode of ["tui", "print"]) {
+    const h = harness(mode, "http://127.0.0.1:18080/v1");
+    for (const event of live) {
+      h.emit(event);
+      if (event.type !== "agent_settled") expect(h.batches).toHaveLength(0);
+    }
+    expect(h.batches).toHaveLength(1);
+    const events = h.batches[0].events;
+    expect(events.map(event => event.type)).toEqual(["turn_start", "chat", "tool", "chat", "turn_end"]);
+    const chats = events.filter(event => event.type === "chat");
+    for (const chat of chats) {
+      expect(chat.model).toBe("mock-model");
+      expect(chat.provider).toBe("mock");
+      expect(chat.usage).toEqual({ input_tokens: 8, output_tokens: 7, cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 0, reasoning_tokens: 0 });
+      expect(chat.cost_usd).toBe(0);
+      expect(chat.status).toBe("ok");
+    }
+    expect(chats[1].output).toEqual([{ role: "assistant", content: [{ type: "text", text: "hra-e2e mock response" }] }]);
+    const tool = events.find(event => event.type === "tool")!;
+    expect(tool.name).toBe("bash");
+    expect(tool.input).toEqual({ command: "echo hra-e2e" });
+    expect(JSON.stringify(tool.output)).toContain("hra-e2e");
+    expect(tool.status).toBe("ok");
+  }
 });

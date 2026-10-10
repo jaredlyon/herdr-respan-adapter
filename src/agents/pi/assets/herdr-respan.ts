@@ -71,7 +71,7 @@ export default function extension(pi: Pi, deliver: (batch: Batch) => void = send
     batch?.events.push({ ...event, turn_id: turn });
   }
   function open(ctx: Context, prompt?: unknown) {
-    if (batch || !enabled() || ctx?.mode !== "tui") return;
+    if (batch || !enabled() || (ctx?.mode !== "tui" && ctx?.mode !== "print")) return;
     const session = ctx.sessionManager?.getSessionId?.();
     if (typeof session !== "string" || !session) return;
     const path = ctx.sessionManager?.getSessionFile?.();

@@ -46,6 +46,9 @@ for tree in traces.values():
     for s in tree:
         if attrs(s)['respan.entity.log_type']=='chat':
             assert not any(k.startswith('gen_ai.usage.') for k in attrs(s)), s
+        if attrs(s)['respan.entity.log_type']=='tool':
+            assert 'echo hra-e2e' in attrs(s)['traceloop.entity.input'], s
+            assert 'hra-e2e' in attrs(s)['traceloop.entity.output'], s
 assert sorted(counts)==[(1,1,0),(1,1,1)], counts
 assert not (root/'state/agents/copilot/otel.jsonl').exists()
 (root/'hooks-spans.json').write_text(json.dumps(spans))

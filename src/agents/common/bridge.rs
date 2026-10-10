@@ -21,7 +21,7 @@ pub enum Event {
 }
 impl Event {
     fn turn_id(&self) -> &str {match self {Self::TurnStart {turn_id,..}|Self::Chat {turn_id,..}|Self::Tool {turn_id,..}|Self::SubagentStart {turn_id,..}|Self::SubagentEnd {turn_id,..}|Self::TurnEnd {turn_id,..}=>turn_id}}
-    fn key(&self,trace:&str)->String {match self {Self::TurnStart {..}=>format!("{trace}:start"),Self::TurnEnd {..}=>format!("{trace}:end"),Self::Chat {id,..}=>format!("{trace}:chat:{id}"),Self::Tool {id,..}=>format!("{trace}:tool:{id}"),Self::SubagentStart {id,..}=>format!("{trace}:sub:{id}:start"),Self::SubagentEnd {id,..}=>format!("{trace}:sub:{id}:end")}}
+    fn key(&self,trace:&str)->String {match self {Self::TurnStart {..}=>format!("{trace}:start"),Self::TurnEnd {..}=>format!("{trace}:end"),Self::Chat {id,..}=>format!("{trace}:chat:{}",component(id)),Self::Tool {id,..}=>format!("{trace}:tool:{}",component(id)),Self::SubagentStart {id,..}=>format!("{trace}:sub:{}:start",component(id)),Self::SubagentEnd {id,..}=>format!("{trace}:sub:{}:end",component(id))}}
     fn scrub(&mut self,ctx:&HookCtx)->Result<()> {match self {
         Self::TurnStart {prompt,..}=>ctx.scrub_content(prompt),
         Self::Chat {input,output,..}|Self::Tool {input,output,..}=>{ctx.scrub_content(input)?;ctx.scrub_content(output)},
@@ -61,6 +61,26 @@ impl Lock {
         Ok(crate::spool::Lock::acquire_at(&dir.join("bridge.lock"),std::time::Duration::from_secs(60))?.map(|lock|Self {_lock:lock}))
     }
 }
+#[derive(Serialize,Deserialize)]
+struct Transaction {open:Open,seen:VecDeque<String>,stage:String,files:Vec<PathBuf>,max_bytes:u64}
+// The durable journal is the commit point. Its snapshot is replayed before any
+// new envelope, so open/seen updates and spool publication cannot diverge.
+fn recover_transaction(ctx:&HookCtx)->Result<()> {
+    let Some(tx)=ctx.load::<Option<Transaction>>("transaction.json")? else {return Ok(());};
+    ctx.save("open.json",&tx.open)?;ctx.save("seen",&tx.seen)?;
+    crate::spool::publish_staged(ctx.global_state_dir(),&tx.stage,tx.max_bytes)?;
+    for file in tx.files {
+        match std::fs::remove_file(file) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}
+    }
+    std::fs::remove_file(ctx.state_dir().join("transaction.json"))?;Ok(())
+}
+fn component(value:&str)->std::borrow::Cow<'_,str> {
+    if !value.contains(['%',':']) {return std::borrow::Cow::Borrowed(value);}
+    let mut encoded=String::with_capacity(value.len());
+    for ch in value.chars() {match ch {'%'=>encoded.push_str("%25"),':'=>encoded.push_str("%3A"),_=>encoded.push(ch)}}
+    std::borrow::Cow::Owned(encoded)
+}
+fn trace_key(agent:&str,session:&str,turn:&str)->String {format!("{}:{}:{}",component(agent),component(session),component(turn))}
 pub fn hook(ctx:&mut HookCtx,stdin:&[u8])->Result<()> {ingest(ctx,serde_json::from_slice(stdin)?)}
 pub fn ingest(ctx:&mut HookCtx,mut batch:Batch)->Result<()> {
     if batch.v!=1||batch.agent!=ctx.agent||batch.session_id.is_empty() {return Err("invalid bridge batch identity/version".into());}
@@ -75,12 +95,16 @@ fn pending(dir:&Path)->Result<Vec<PathBuf>> {
 }
 fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
     let Some(_lock)=Lock::acquire(ctx.state_dir())? else {return Ok(());};
+    recover_transaction(ctx)?;
+    let prefix=format!("transaction-{}-",ctx.agent);
+    crate::spool::discard_staged(ctx.global_state_dir(),&prefix)?;
     let mut open:Open=ctx.load("open.json")?;let mut seen=Seen::load(ctx)?;let files=pending(ctx.state_dir())?;
+    let stage=format!("{prefix}{}",crate::record::random_id()?);ctx.begin_staged(&stage)?;
     let old_proxy=ctx.proxy_active;
     for file in &files {
         let envelope:Envelope=serde_json::from_slice(&std::fs::read(file)?)?;ctx.proxy_active=envelope.proxy_active;
         for event in envelope.batch.events {
-            let trace=format!("{}:{}:{}",ctx.agent,envelope.batch.session_id,event.turn_id());let event_key=event.key(&trace);
+            let trace=trace_key(&ctx.agent,&envelope.batch.session_id,event.turn_id());let event_key=event.key(&trace);
             if seen.set.contains(&event_key) {continue;}
             let turn=open.turns.entry(trace.clone()).or_insert_with(|| {
                 let mut metadata=envelope.metadata.clone();
@@ -92,15 +116,15 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
                 Event::TurnStart {ts_ns,prompt,metadata,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;turn.root_metadata=metadata;index_turn(ctx,&trace,turn)?;},
                 Event::TurnEnd {ts_ns,output,status,error,..}=>{turn.end=Some(ts_ns);turn.output=output;turn.status=status;turn.error=error;index_turn(ctx,&trace,turn)?;},
                 Event::Chat {id,parent_id,start_ns,end_ns,model,provider,input,output,usage,cost_usd,aux_task,status,error,metadata,..}=>{
-                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{id}"),parent_id.as_deref(),start_ns,end_ns);
+                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{}",component(&id)),parent_id.as_deref(),start_ns,end_ns);
                     rec.name=if let Some(model)=&model {format!("{model}.chat")} else {"chat".into()};rec.log_type="chat".into();rec.model=model;rec.provider=provider;rec.input=input;rec.output=output;rec.usage=usage.unwrap_or_default();rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;
                     if let Some(cost)=cost_usd {rec.metadata.insert("estimated_cost_usd".into(),json!(cost));}
                     if let Some(aux)=aux_task {rec.metadata.insert("hermes.aux_task".into(),json!(aux));}rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
                 Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,mut metadata,..}=>{
-                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{id}"),parent_id.as_deref(),start_ns,end_ns);
+                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{}",component(&id)),parent_id.as_deref(),start_ns,end_ns);
                     // `parent_tool_id` metadata nests a tool under the tool that ran it (e.g. Codex code-mode `exec` scripts).
-                    if let Some(Value::String(tool)) = metadata.remove("parent_tool_id") { rec.parent_key=Some(format!("{trace}:tool:{tool}")); }
+                    if let Some(Value::String(tool)) = metadata.remove("parent_tool_id") { rec.parent_key=Some(format!("{trace}:tool:{}",component(&tool))); }
                     rec.name=name.unwrap_or_else(||"tool".into());rec.log_type="tool".into();rec.input=input;rec.output=output;rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;rec.metadata.insert("tool_call_id".into(),json!(id));rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
                 Event::SubagentStart {id,parent_id,ts_ns,name,metadata,..}=>{infer_time(turn,ts_ns,ts_ns);let sub=turn.subs.entry(id).or_default();sub.start=Some(ts_ns);sub.parent_id=parent_id;sub.name=name;sub.metadata=metadata;},
@@ -123,8 +147,9 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
     }
     let mut closed:Vec<_>=open.turns.iter().filter(|(_,t)|t.emitted&&t.subs.values().all(|s|s.emitted)).map(|(k,t)|(k.clone(),t.touched)).collect();closed.sort_by_key(|(_,ts)|*ts);
     for (key,_) in closed.iter().take(closed.len().saturating_sub(1024)) {open.turns.remove(key);}
-    ctx.finish()?;ctx.save("open.json",&open)?;ctx.save("seen",&seen.order)?;
-    for file in files {std::fs::remove_file(file)?;}Ok(())
+    ctx.finish()?;
+    ctx.save("transaction.json",&Transaction {open,seen:seen.order,stage,files,max_bytes:ctx.config.spool_max_bytes})?;
+    recover_transaction(ctx)
 }
 fn index_turn(ctx:&HookCtx,trace:&str,turn:&Turn)->Result<()> {
     if let (Some(run),Some(start))=(&turn.run_id,turn.start) {crate::otlp::save_turn(ctx.global_state_dir(),run,trace,start,turn.end)?;}Ok(())
@@ -132,7 +157,7 @@ fn index_turn(ctx:&HookCtx,trace:&str,turn:&Turn)->Result<()> {
 fn infer_time(turn:&mut Turn,start:u64,end:u64) {if !turn.explicit_start {turn.start=Some(turn.start.map_or(start,|s|s.min(start)));}turn.latest_end=turn.latest_end.max(end);}
 fn child(turn:&Turn,trace:&str,suffix:&str,parent:Option<&str>,start:u64,end:u64)->SpanRecord {
     { let mut metadata=turn.metadata.clone(); if parent.is_some() {metadata.insert("subagent".into(),json!(true));}
-    SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:{suffix}"),parent_key:Some(parent.map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:sub:{id}"))),run_id:turn.run_id.clone(),start_ns:start,end_ns:end,thread_id:Some(turn.session_id.clone()),metadata,..Default::default()} }
+    SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:{suffix}"),parent_key:Some(parent.map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:sub:{}",component(id)))),run_id:turn.run_id.clone(),start_ns:start,end_ns:end,thread_id:Some(turn.session_id.clone()),metadata,..Default::default()} }
 }
 fn emit_turn(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     if turn.emitted {return Ok(());}let Some(end)=turn.end else {return Ok(());};let start=turn.start.unwrap_or(end);let end=end.max(turn.latest_end).max(start);
@@ -143,17 +168,17 @@ fn emit_subs(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     for (id,sub) in &mut turn.subs {
         if sub.emitted {continue;}let (Some(start),Some(end))=(sub.start,sub.end) else {continue;};
         let mut metadata=turn.metadata.clone();metadata.insert("subagent".into(),json!(true));metadata.extend(sub.metadata.clone());
-        ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:sub:{id}"),parent_key:Some(sub.parent_id.as_ref().map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:tool:{id}"))),run_id:turn.run_id.clone(),name:sub.name.clone().unwrap_or_else(||"subagent".into()),start_ns:start,end_ns:end.max(start),output:sub.output.clone(),status:sub.status.clone().unwrap_or_else(||"ok".into()),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;sub.emitted=true;
+        ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:sub:{}",component(id)),parent_key:Some(sub.parent_id.as_ref().map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:tool:{}",component(id)))),run_id:turn.run_id.clone(),name:sub.name.clone().unwrap_or_else(||"subagent".into()),start_ns:start,end_ns:end.max(start),output:sub.output.clone(),status:sub.status.clone().unwrap_or_else(||"ok".into()),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;sub.emitted=true;
     }Ok(())
 }
 pub(crate) fn has_pending(state:&Path)->Result<bool> {
     let dirs=match std::fs::read_dir(state.join("agents")) {Ok(d)=>d,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(false),Err(e)=>return Err(e.into())};
-    for dir in dirs {let dir=dir?;if dir.file_type()?.is_dir()&&!pending(&dir.path())?.is_empty() {return Ok(true);}}Ok(false)
+    for dir in dirs {let dir=dir?;if dir.file_type()?.is_dir()&&(!pending(&dir.path())?.is_empty()||dir.path().join("transaction.json").exists()) {return Ok(true);}}Ok(false)
 }
 pub(crate) fn at_flush(paths:&Paths,config:&Config,now:u64)->Result<()> {
     let dirs=match std::fs::read_dir(paths.state.join("agents")) {Ok(d)=>d,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(()),Err(e)=>return Err(e.into())};
     for dir in dirs {let dir=dir?;if !dir.file_type()?.is_dir() {continue;}
-        if !dir.path().join("open.json").exists()&&pending(&dir.path())?.is_empty() {continue;}let kind=dir.file_name().to_string_lossy().into_owned();
+        if !dir.path().join("open.json").exists()&&!dir.path().join("transaction.json").exists()&&pending(&dir.path())?.is_empty() {continue;}let kind=dir.file_name().to_string_lossy().into_owned();
         let mut ctx=HookCtx::new(paths.clone(),config.clone(),&kind,BTreeMap::new(),None,false)?;drain(&mut ctx,true,now)?;
     }Ok(())
 }
@@ -163,6 +188,40 @@ pub(crate) fn at_flush(paths:&Paths,config:&Config,now:u64)->Result<()> {
     fn context(tmp:&crate::tests::Temp)->HookCtx {HookCtx::new(Paths {state:tmp.path.join("state"),config:tmp.path.join("config")},Config {customer_identifier:"test".into(),..Default::default()},"fake",BTreeMap::new(),Some("run".into()),false).unwrap()}
     fn batch(events:Value)->Batch {serde_json::from_value(json!({"v":1,"agent":"fake","session_id":"s","events":events})).unwrap()}
     fn records(ctx:&HookCtx)->Vec<SpanRecord> {crate::spool::ready(ctx.state_dir().parent().unwrap().parent().unwrap()).unwrap().iter().flat_map(|p|std::fs::read_to_string(p).unwrap().lines().map(|s|serde_json::from_str(s).unwrap()).collect::<Vec<_>>()).collect()}
+    #[test] fn component_keys_are_unambiguous_without_ordinary_id_churn() {
+        assert_eq!(trace_key("fake","s","t"),"fake:s:t");
+        assert_ne!(trace_key("fake","a:b","c"),trace_key("fake","a","b:c"));
+        assert_ne!(trace_key("fake","a%3Ab","c"),trace_key("fake","a:b","c"));
+        assert_eq!(component(":%"),"%3A%25");
+    }
+    #[test] fn long_identifiers_survive_state_and_spool_without_collisions() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+        let child_id="c".repeat(18000);
+        let mut b=batch(json!([{"type":"turn_start","turn_id":"t","ts_ns":1},{"type":"chat","turn_id":"t","id":child_id,"start_ns":2,"end_ns":3},{"type":"tool","turn_id":"t","id":child_id,"start_ns":2,"end_ns":3},{"type":"turn_end","turn_id":"t","ts_ns":4}]));
+        b.session_id="x".repeat(18000);ingest(&mut ctx,b.clone()).unwrap();
+        let all=records(&ctx);assert_eq!(all.len(),3);
+        let ids:BTreeSet<_>=all.iter().map(|r|crate::otlp::span_id(&r.span_key)).collect();assert_eq!(ids.len(),3);
+        assert!(all.iter().all(|r|r.span_key.len()>18000));
+        assert_eq!(all.iter().find(|r|r.log_type=="tool").unwrap().metadata["tool_call_id"],child_id);
+        ingest(&mut ctx,b).unwrap();assert_eq!(records(&ctx).len(),3);
+    }
+    #[test] fn staged_crash_recovery_discards_uncommitted_and_replays_committed_once() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+        let stage="transaction-fake-uncommitted";ctx.begin_staged(stage).unwrap();
+        ctx.emit(SpanRecord {span_key:"uncommitted".into(),..Default::default()}).unwrap();ctx.finish().unwrap();
+        assert!(records(&ctx).is_empty());
+        let now=ctx.now_ns();drain(&mut ctx,false,now).unwrap();assert!(records(&ctx).is_empty());
+        let stage="transaction-fake-committed";ctx.begin_staged(stage).unwrap();
+        ctx.emit(SpanRecord {span_key:"committed".into(),..Default::default()}).unwrap();ctx.finish().unwrap();
+        let tx=Transaction {open:Open::default(),seen:VecDeque::from(["event".into()]),stage:stage.into(),files:Vec::new(),max_bytes:u64::MAX};
+        ctx.save("transaction.json",&tx).unwrap();
+        // Simulate a crash after only the first state file was persisted.
+        ctx.save("open.json",&tx.open).unwrap();recover_transaction(&ctx).unwrap();assert_eq!(records(&ctx).len(),1);
+        // A crash after publication leaves the journal, but never a second copy.
+        ctx.save("transaction.json",&tx).unwrap();recover_transaction(&ctx).unwrap();assert_eq!(records(&ctx).len(),1);
+        let files=crate::spool::ready(ctx.global_state_dir()).unwrap();for file in files {std::fs::remove_file(file).unwrap();}
+        ctx.save("transaction.json",&tx).unwrap();recover_transaction(&ctx).unwrap();assert!(records(&ctx).is_empty());
+    }
     #[test] fn out_of_order_and_idempotent_separate_ingests() {
         let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
         let end=batch(json!([{"type":"turn_end","turn_id":"t","ts_ns":100,"output":"done"}]));ingest(&mut ctx,end.clone()).unwrap();assert!(records(&ctx).is_empty());let now=ctx.now_ns();drain(&mut ctx,true,now).unwrap();assert!(records(&ctx).is_empty());

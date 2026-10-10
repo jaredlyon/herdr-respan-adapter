@@ -9,9 +9,9 @@ static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| [
         (r"sk-[A-Za-z0-9_-]{20,}", "openai"),
         (r"gh[pousr]_[A-Za-z0-9]{30,}", "github"),
         (r"github_pat_[A-Za-z0-9_]{30,}", "github"),
-        (r"AKIA[0-9A-Z]{16}", "aws"),
+        (r"(?:AKIA|ASIA)[0-9A-Z]{16}", "aws"),
         (r"xox[abposr]-[A-Za-z0-9-]{10,}", "slack"),
-        (r"Bearer\s+[A-Za-z0-9._~+/=-]{20,}", "bearer"),
+        (r"(?i:bearer)\s+[A-Za-z0-9._~+/=-]{20,}", "bearer"),
     ].into_iter().map(|(p, k)| (Regex::new(p).expect("constant regex"), k)).collect());
 const KEY_PATTERN: &str = r"(?ix:password|passwd|secret|token|authorization|proxy[-_]?authorization|
     (?:[a-z0-9]+[-_])*(?:api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|
@@ -152,6 +152,12 @@ pub fn cap(text: &str, bytes: usize) -> String {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn bearer_case_and_temporary_aws_keys() {
+        let r=Redactor::new(&[]).unwrap();
+        for input in ["bearer abcdefghijklmnopqrstuvwxyz", "BEARER abcdefghijklmnopqrstuvwxyz", "ASIA1234567890ABCDEF"] {
+            assert!(r.text(input).starts_with("[REDACTED:"));
+        }
+    }
     #[test] fn secrets_and_false_positives() {
         let r = Redactor::new(&["PRIVATEWORD".into()]).unwrap();
         for secret in ["sk-ant-abcdefghijklmnopqrstuvwxyz", "sk-abcdefghijklmnopqrstuvwxyz", "ghp_abcdefghijklmnopqrstuvwxyz123456", "github_pat_abcdefghijklmnopqrstuvwxyz123456", "AKIA1234567890ABCDEF", "xoxb-1234567890abc", "Bearer abcdefghijklmnopqrstuvwxyz", "-----BEGIN RSA PRIVATE KEY-----\ncontent\n-----END RSA PRIVATE KEY-----", "password=hunter2", "API_KEY: hidden", "PRIVATEWORD"] {

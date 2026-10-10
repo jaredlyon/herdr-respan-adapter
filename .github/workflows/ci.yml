@@ -1,7 +1,9 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -21,3 +23,17 @@ jobs:
         run: cargo +stable test --locked
       - name: Clippy
         run: cargo +stable clippy --locked --all-targets -- -D warnings
+  assets:
+    # In-process adapter assets (TS/JS/Python) have their own stdlib-only checks.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun test src/agents/pi/extension.test.ts
+      - run: bun src/agents/omp/assets/check.ts
+      - run: node src/agents/opencode/assets/test.mjs
+      - run: node src/proxy/provider.test.mjs
+      - run: python3 -m unittest discover -s src/agents/hermes -p "test_*.py"

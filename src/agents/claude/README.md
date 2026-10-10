@@ -1,0 +1,33 @@
+# Claude Code
+
+Silent command hooks translate Claude events into the shared bridge; Core owns span keys, parenting, redaction, caps, toggles, spool and OTLP. Stdout stays empty, and the outer hook command always exits zero. No provider calls, credentials, login changes, or native telemetry configuration are needed.
+
+## Setup
+
+Adds one command group per event to `<CLAUDE_CONFIG_DIR>/settings.json`, falling back to `~/.claude/settings.json` (nonempty relocation values and leading `~` are honored). `--project DIR` instead uses `DIR/.claude/settings.local.json`.
+
+Exact arrays edited: `/hooks/SessionStart`, `/hooks/UserPromptSubmit`, `/hooks/PreToolUse`, `/hooks/PostToolUse`, `/hooks/PostToolUseFailure`, `/hooks/SubagentStart`, `/hooks/SubagentStop`, `/hooks/Stop`, `/hooks/StopFailure`, `/hooks/SessionEnd`. SessionStart uses matcher `^(startup|resume|clear|compact|fork)$`; all handlers have type `command` and timeout 10 seconds. The shared command builder supplies the absolute binary, `hook claude`, `--state-dir`, and `--config-dir`. Windows selects `shell: powershell` explicitly and uses the PowerShell call operator with quoted arguments. Existing herdr SessionStart and custom groups remain in place; removal deletes only ownership-recorded additions.
+
+No fixed minimum version is asserted: the spike did not establish one. This implementation targets the documented Claude 2.1.x hooks; older releases without these events have reduced coverage. Synthetic fixtures use the current documented schema (including 2.1.295-era fields), not a claimed runtime qualification.
+
+## Coverage and limits
+
+- One turn span from UserPromptSubmit to Stop, StopFailure or SessionEnd; native prompt IDs are preferred, with a session-local arrival ID fallback.
+- Tools correlate PreToolUse and PostToolUse/Failure by tool_use_id, including failure status. Duration falls back to PostToolUse duration_ms when a pre-hook is missing.
+- One chat span per API response, not per JSONL row: requestId/message.id aliases, row UUID deduplication, all unique content parts and the latest reported usage. Cache reads/writes stay separate; absent usage stays unknown. Input is the conversation observed in the current turn, not a fabricated full provider request. Timestamps are persisted-message times, not actual API request-start or TTFT.
+- Spawned Agent/legacy Task children are linked only through tool_response.agentId or transcript toolUseResult.agentId plus sourceToolUseID/tool_result.tool_use_id. Child transcripts use native agent_transcript_path, with child chat spans below the child agent and the child agent below its spawning tool. Internal agents with no authoritative spawning-tool linkage are not misparented. Main-session hooks carrying agent_id never open/close a main turn.
+- Complete JSONL lines only; incomplete final bytes remain for the next read. Truncation/rotation restarts the cursor. Metadata/progress/compact-summary records do not create human turns. Existing history is consumed without creating spans before the first observed UserPromptSubmit.
+- Pending streams settle at the next response/tool-result/turn-duration boundary, or after an ended hook and a final non-null stop_reason. Stop can precede the final row: a detached Core settlement pass rereads pending transcripts, while hooks return immediately. Progressive usage with no completion boundary is retained, not guessed or summed. Delays beyond Core's bounded retry window need a later hook/flush; disk schemas and transcript completeness are not vendor guarantees.
+- Native queue files plus a nonblocking adapter lock preserve concurrent hook deliveries. State/content is saved through Core's scrubbing store only. Grok-imported hooks are rejected by GROK_HOOK_EVENT/GROK_SESSION_ID/GROK_HOOK_NAME or Grok envelope shape; Cursor envelopes/environment are rejected as well.
+- Proxy/Respan routing and tool/subagent toggles are handled by Core; adapter model spans are suppressed when proxy tracing is active. Transcript-only capture cannot promise hidden compaction/auxiliary calls, retry/error API calls missing from disk, or exact provider request content.
+
+## Fixture provenance
+
+All fixtures are synthetic, contain no real sessions, credentials or personal data, and were never generated through a provider.
+
+- `fixtures/hooks.json`: native hook fields from [Claude hook reference](https://code.claude.com/docs/en/hooks#common-input-fields), [PreToolUse/PostToolUse](https://code.claude.com/docs/en/hooks#pretooluse), [SubagentStop](https://code.claude.com/docs/en/hooks#subagentstop), and [Agent result](https://code.claude.com/docs/en/hooks#agent), read 2026-10-09. `$TRANSCRIPT`/`$CHILD` are replaced only with test-temp paths.
+- `fixtures/streamed.jsonl`: synthetic from `matt1398/claude-devtools@1486f2042c87bb547a4e34808ab54ab34a33f132`, [`src/main/types/jsonl.ts:15-201`](https://github.com/matt1398/claude-devtools/blob/1486f2042c87bb547a4e34808ab54ab34a33f132/src/main/types/jsonl.ts#L15-L201) and [`src/main/utils/jsonl.ts:227-280`](https://github.com/matt1398/claude-devtools/blob/1486f2042c87bb547a4e34808ab54ab34a33f132/src/main/utils/jsonl.ts#L227-L280). Two different streamed parts share requestId/message.id; output usage increases from 2 to 7; one row repeats to exercise deduplication.
+- `fixtures/subagent.jsonl`: same pinned types, with sessionId/agentId/isSidechain fields and a separate child file, linked by the hook Agent result. Authoritative linkage is documented by [`SubagentResolver.ts:195-259`](https://github.com/matt1398/claude-devtools/blob/1486f2042c87bb547a4e34808ab54ab34a33f132/src/main/services/discovery/SubagentResolver.ts#L195-L259).
+- `fixtures/batch.json`: expected bridge v1 translation of streamed.jsonl and the prompt/Stop hooks; only timestamps and temporary transcript path are normalized.
+
+Tests cover golden bridge translation, five-span parent/child spool tree, progressive usage across invocations, delayed/partial tails, replay/rotation, concurrent queue retention, foreign/malformed rejection, tool failures, and setup-idempotence/remove round-trip next to realistic herdr/custom hooks. Verification is synthetic only; no live Claude, Windows shell execution, subscription proxy, or Respan ingest was exercised.

@@ -99,7 +99,8 @@ impl Drop for TransferGuard {
     }
 }
 fn transfer_dir(path: &std::path::Path) -> Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
+    #[cfg(unix)] let mut builder = builder;
     #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; builder.mode(0o700); }
     builder.create(path)?;
     Ok(())
@@ -355,8 +356,7 @@ pub fn config(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
                 private_write(&staged.join("old.env"), bytes).unwrap();
             }
             private_write(&staged.join(".env"), b"RESPAN_API_KEY=new\n").unwrap();
-            // An invalid staged source deterministically makes the second rename fail.
-            std::fs::create_dir(staged.join("config.toml")).unwrap();
+            // A missing staged source deterministically makes the second rename fail.
             assert!(commit_pair(&dir, &staged, old.is_some()).is_err());
             assert_eq!(Config::load(&dir).unwrap().base_url, "https://old.example");
             assert_eq!(std::fs::read(dir.join(".env")).ok().as_deref(), old);

@@ -6,7 +6,9 @@ impl Writer {
     pub fn new(state: &Path, max_bytes: u64) -> Result<Self> {
         let dir = state.join("spool"); fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}-{}.jsonl", std::process::id(), now_ns()));
-        let mut options = OpenOptions::new(); options.create_new(true).read(true).append(true);
+        let mut options = OpenOptions::new(); options.create_new(true).read(true).write(true);
+        // Windows append-only access excludes FILE_WRITE_DATA, which set_len needs
+        // for rollback/close. The lifetime OS lock makes seek-to-end appends exclusive.
         #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
         let file = options.open(&path)?;
         file.try_lock()?;
@@ -18,6 +20,7 @@ impl Writer {
     }
     fn append_bytes(&mut self, bytes: &[u8], write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>) -> Result<()> {
         let file = self.file.as_mut().ok_or("closed spool writer")?;
+        file.seek(SeekFrom::End(0))?;
         if let Err(error) = write(file, bytes) {
             // Never append after an unrepairable tail or publish it from Drop.
             if file.set_len(self.complete_bytes).is_err() { self.file.take(); }

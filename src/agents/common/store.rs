@@ -49,8 +49,8 @@ impl HookCtx {
     }
     #[test] fn stale_recovery_owner_tokens_and_leaf_validation() {
         let tmp=crate::tests::Temp::new();let ctx=ctx(crate::paths::Paths {state:tmp.path.join("state"),config:tmp.path.join("config")});let old=ctx.try_lock("stale").unwrap().unwrap();let path=ctx.state_dir().join("stale.lock");
-        std::fs::File::open(&path).unwrap().set_times(FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(31))).unwrap();assert!(ctx.try_lock("stale").unwrap().is_none());drop(old);
-        std::fs::write(&path,"orphan-owner").unwrap();std::fs::File::open(&path).unwrap().set_times(FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(31))).unwrap();let replacement=ctx.try_lock("stale").unwrap().unwrap();assert!(path.exists());drop(replacement);assert!(!path.exists());
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_times(FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(31))).unwrap();assert!(ctx.try_lock("stale").unwrap().is_none());drop(old);
+        std::fs::write(&path,"orphan-owner").unwrap();std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_times(FileTimes::new().set_modified(std::time::SystemTime::now()-Duration::from_secs(31))).unwrap();let replacement=ctx.try_lock("stale").unwrap().unwrap();assert!(path.exists());drop(replacement);assert!(!path.exists());
         for name in ["../outside","a/b",".","..",""] {assert!(ctx.try_lock(name).is_err());assert!(ctx.lock(name).is_err());}
     }
     #[test] fn blocking_acquisition_has_a_two_second_deadline() {

@@ -1,0 +1,144 @@
+id = "jaredlyon.respan-adapter"
+name = "Respan"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Trace herdr agents to Respan"
+platforms = ["linux", "macos", "windows"]
+
+[[build]]
+platforms = ["linux", "macos"]
+command = ["sh", "scripts/install.sh"]
+
+[[build]]
+platforms = ["windows"]
+command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/install.ps1"]
+
+# The .exe suffix is intentional on all platforms (Unix binaries are renamed).
+[[startup]]
+command = ["./bin/herdr-respan.exe", "startup"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["./bin/herdr-respan.exe", "lifecycle"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/herdr-respan.exe", "lifecycle"]
+
+[[events]]
+on = "pane.exited"
+command = ["./bin/herdr-respan.exe", "lifecycle"]
+
+[[actions]]
+id = "setup"
+title = "Set up agent adapters"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","setup"]
+
+[[actions]]
+id = "remove"
+title = "Remove all owned agent adapters"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","remove","--all"]
+
+[[actions]]
+id = "status"
+title = "Respan status"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","status"]
+
+[[actions]]
+id = "test"
+title = "Send one synthetic test trace"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","test"]
+
+[[actions]]
+id = "run"
+title = "Launch agent with request tracing"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","run"]
+
+[[actions]]
+id = "pause"
+title = "Pause this workspace"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","pause"]
+
+[[actions]]
+id = "resume"
+title = "Resume this workspace"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","resume"]
+
+[[actions]]
+id = "config-export"
+title = "Copy secret config transfer blob"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","config-export"]
+
+[[actions]]
+id = "config-import"
+title = "Import secret config transfer blob"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","config-import"]
+
+[[actions]]
+id = "config-push"
+title = "Push config to a saved SSH machine"
+contexts = ["global", "workspace", "pane"]
+command = ["./bin/herdr-respan.exe","ui","action","config-push"]
+
+[[panes]]
+id = "status"
+title = "Respan status"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","status"]
+
+[[panes]]
+id = "setup"
+title = "Respan setup"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","setup"]
+
+[[panes]]
+id = "import"
+title = "Import Respan config"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","import"]
+
+[[panes]]
+id = "export"
+title = "Secret config export"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","export"]
+
+[[panes]]
+id = "push"
+title = "Push Respan config"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","push"]
+
+[[panes]]
+id = "run-choice"
+title = "Choose an agent"
+placement = "popup"
+width = "85%"
+height = "85%"
+command = ["./bin/herdr-respan.exe","ui","popup","run-choice"]
+
+[[panes]]
+id = "run"
+title = "Respan agent"
+placement = "split"
+command = ["./bin/herdr-respan.exe","ui","popup","launch"]

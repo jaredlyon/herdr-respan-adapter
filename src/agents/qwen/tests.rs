@@ -188,3 +188,43 @@ fn fixture_translates_to_exact_golden_events() {
     assert_eq!(serde_json::to_value(events).unwrap(),serde_json::to_value(expected.events).unwrap());
     std::fs::remove_file(lock).unwrap();
 }
+
+#[test]
+fn live_qwen_025_mock_text_and_tool_transcripts() {
+    let tmp = crate::tests::Temp::new();
+    let mut ctx = context(&tmp);
+    let hooks: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    let transcripts = [include_str!("fixtures/live-transcript-0.jsonl"), include_str!("fixtures/live-transcript-1.jsonl")];
+    for mut p in hooks {
+        let index = usize::from(p["session_id"] == "live-session-1");
+        let path = tmp.path.join(format!("live-{index}.jsonl"));
+        if p["hook_event_name"] == "SessionStart" {
+            std::fs::write(&path, "").unwrap();
+        } else if matches!(p["hook_event_name"].as_str(), Some("PreToolUse" | "Stop")) {
+            std::fs::write(&path, transcripts[index]).unwrap();
+        }
+        p["transcript_path"] = json!(path);
+        process(&mut ctx, &p).unwrap();
+    }
+    let all = records(&ctx);
+    assert_eq!(all.len(), 6);
+    let turns = all.iter().filter(|r| r.log_type == "agent").collect::<Vec<_>>();
+    assert_eq!(turns.len(), 2);
+    let chats = all.iter().filter(|r| r.log_type == "chat").collect::<Vec<_>>();
+    assert_eq!(chats.len(), 3);
+    for chat in chats {
+        assert_eq!(chat.model.as_deref(), Some("mock-model"));
+        assert_eq!(chat.usage.input_tokens, Some(11));
+        assert_eq!(chat.usage.output_tokens, Some(7));
+        assert_eq!(chat.usage.cache_read_input_tokens, Some(3));
+        assert_eq!(chat.usage.reasoning_tokens, Some(0));
+        assert!(turns.iter().any(|turn| Some(&turn.span_key) == chat.parent_key.as_ref() && turn.trace_key == chat.trace_key));
+    }
+    let tool = all.iter().find(|r| r.log_type == "tool").unwrap();
+    assert_eq!(tool.name, "run_shell_command");
+    assert!(tool.input.as_ref().unwrap().to_string().contains("echo hra-e2e"));
+    assert!(tool.output.as_ref().unwrap().to_string().contains("hra-e2e"));
+    assert_eq!(tool.end_ns - tool.start_ns, 10_000_000);
+    assert!(turns.iter().any(|turn| Some(&turn.span_key) == tool.parent_key.as_ref() && turn.trace_key == tool.trace_key));
+    assert!(all.iter().all(|r| r.status == "ok"));
+}

@@ -30,18 +30,27 @@ struct Tool { id: String, name: String, input: Option<Value>, fingerprint: Strin
 
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> { value.get(key).and_then(Value::as_str) }
+fn model_request(payload: &Value) -> bool {
+    let request = &payload["llm_request"];
+    text(request, "model").is_some_and(|m| !m.is_empty()) && request.get("messages").is_some_and(Value::is_array)
+}
 fn identity(payload: &Value) -> bool {
     if ["permission_mode", "tool_use_id", "prompt_id", "conversation_id"].iter().any(|k| payload.get(k).is_some()) { return false; }
     if ["session_id", "transcript_path", "cwd", "timestamp"].iter().any(|k| text(payload, k).is_none_or(str::is_empty)) { return false; }
     match text(payload, "hook_event_name") {
         Some("BeforeAgent") => text(payload, "prompt").is_some(),
         Some("AfterAgent") => text(payload, "prompt_response").is_some(),
-        Some("BeforeModel") => payload.get("llm_request").is_some_and(Value::is_object),
-        Some("AfterModel") => payload.get("llm_request").is_some_and(Value::is_object) && payload.get("llm_response").is_some_and(Value::is_object),
+        Some("BeforeModel") => model_request(payload),
+        Some("AfterModel") => model_request(payload) && payload.pointer("/llm_response/candidates").is_some_and(Value::is_array),
         Some("BeforeTool") => text(payload, "tool_name").is_some() && payload.get("tool_input").is_some_and(Value::is_object),
         Some("AfterTool") => text(payload, "tool_name").is_some() && payload.get("tool_input").is_some_and(Value::is_object) && payload.get("tool_response").is_some_and(Value::is_object),
         Some("SessionStart" | "SessionEnd") => {
-            std::env::var("HERDR_RESPAN_ADAPTER").as_deref() == Ok("gemini") || text(payload, "transcript_path").is_some_and(|p| p.replace('\\', "/").contains("/.gemini/"))
+            let shape = if payload["hook_event_name"] == "SessionStart" {
+                matches!(text(payload, "source"), Some("startup" | "resume" | "clear"))
+            } else {
+                matches!(text(payload, "reason"), Some("exit" | "clear" | "logout" | "prompt_input_exit" | "other"))
+            };
+            shape && (std::env::var("HERDR_RESPAN_ADAPTER").as_deref() == Ok("gemini") || text(payload, "transcript_path").is_some_and(|p| p.replace('\\', "/").contains("/.gemini/")))
         }
         _ => false,
     }

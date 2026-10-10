@@ -1,0 +1,14 @@
+{
+  "v":1,"agent":"opencode","session_id":"s1","session_path":null,"cwd":"/repo","agent_version":null,
+  "events":[
+    {"type":"turn_start","turn_id":"p1","ts_ns":1000000000,"prompt":[{"type":"text","text":"List the files"}]},
+    {"type":"chat","turn_id":"p1","id":"s1:a1","parent_id":null,"start_ns":1020000000,"end_ns":1100000000,
+      "model":"claude-haiku-4-5","provider":"anthropic","input":[{"role":"user","content":[{"type":"text","text":"List the files"}]}],
+      "output":[{"role":"assistant","content":[{"type":"text","text":"The directory is /repo"}]}],
+      "usage":{"input_tokens":12,"output_tokens":5,"cache_read_input_tokens":3,"cache_creation_input_tokens":4,"reasoning_tokens":2},
+      "cost_usd":0.01,"aux_task":null,"status":"ok","error":null},
+    {"type":"tool","turn_id":"p1","id":"s1:call1","parent_id":null,"name":"bash","start_ns":1030000000,"end_ns":1040000000,
+      "input":{"command":"pwd"},"output":"/repo","status":"ok","error":null},
+    {"type":"turn_end","turn_id":"p1","ts_ns":1200000000,"output":[{"type":"text","text":"The directory is /repo"}],"status":"ok","error":null}
+  ]
+}

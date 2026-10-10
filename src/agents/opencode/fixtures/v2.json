@@ -1,0 +1,11 @@
+[
+  {"id":"e1","type":"session.next.prompt.admitted","data":{"timestamp":1000,"sessionID":"s1","messageID":"p1","prompt":{"text":"List the files"},"delivery":"queue"}},
+  {"id":"e2","type":"session.next.step.started","data":{"timestamp":1020,"sessionID":"s1","assistantMessageID":"a1","agent":"build","model":{"id":"claude-haiku-4-5","providerID":"anthropic"}}},
+  {"id":"e3","type":"session.next.text.delta","data":{"timestamp":1040,"sessionID":"s1","assistantMessageID":"a1","textID":"text1","delta":"partial"}},
+  {"id":"e4","type":"session.next.tool.called","data":{"timestamp":1030,"sessionID":"s1","assistantMessageID":"a1","callID":"call1","tool":"bash","input":{"command":"pwd"},"provider":{"executed":false}}},
+  {"id":"e5","type":"session.next.tool.success","data":{"timestamp":1040,"sessionID":"s1","assistantMessageID":"a1","callID":"call1","structured":{},"content":[{"type":"text","text":"/repo"}],"result":"/repo","provider":{"executed":false}}},
+  {"id":"e6","type":"session.next.text.ended","data":{"timestamp":1050,"sessionID":"s1","assistantMessageID":"a1","textID":"text1","text":"The directory is /repo"}},
+  {"id":"e6","type":"session.next.text.ended","data":{"timestamp":1050,"sessionID":"s1","assistantMessageID":"a1","textID":"text1","text":"The directory is /repo"}},
+  {"id":"e7","type":"session.next.step.ended","data":{"timestamp":1100,"sessionID":"s1","assistantMessageID":"a1","finish":"stop","cost":0.01,"tokens":{"input":12,"output":5,"reasoning":2,"cache":{"read":3,"write":4}}}},
+  {"id":"e8","type":"session.execution.succeeded","data":{"timestamp":1200,"sessionID":"s1"}}
+]

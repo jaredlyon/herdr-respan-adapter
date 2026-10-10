@@ -1,0 +1,11 @@
+{
+  "v":1,"agent":"pi","session_id":"synthetic-session","session_path":"/tmp/pi-synthetic-session.jsonl","cwd":"/tmp/pi-example",
+  "events":[
+    {"type":"turn_start","turn_id":"t1","ts_ns":1000000000,"prompt":"Read the example"},
+    {"type":"chat","turn_id":"t1","id":"response-1","parent_id":null,"start_ns":1030000000,"end_ns":1050000000,"model":"haiku","provider":"anthropic","input":[{"role":"system","content":"Be concise."},{"role":"user","content":"Read the example","timestamp":1000}],"output":[{"role":"assistant","content":[{"type":"toolCall","id":"read-1","name":"read","arguments":{"path":"example.txt"}}]}],"usage":{"input_tokens":12,"output_tokens":3,"cache_read_input_tokens":0,"cache_creation_input_tokens":4},"cost_usd":0.000032,"status":"ok"},
+    {"type":"tool","turn_id":"t1","id":"read-1","parent_id":null,"name":"read","start_ns":1060000000,"end_ns":1070000000,"input":{"path":"example.txt"},"output":{"content":[{"type":"text","text":"Example"}]},"status":"ok"},
+    {"type":"tool","turn_id":"t1","id":"c1","parent_id":null,"name":"compaction","start_ns":1080000000,"end_ns":1090000000,"input":{"reason":"threshold","tokensBefore":19},"output":{"type":"compaction","id":"compact-entry","summary":"Read example","tokensBefore":19,"firstKeptEntryId":"user-entry","timestamp":"1970-01-01T00:00:01.090Z"},"status":"ok"},
+    {"type":"chat","turn_id":"t1","id":"response-2","parent_id":null,"start_ns":1110000000,"end_ns":1120000000,"model":"haiku-resolved","provider":"anthropic","input":[{"role":"system","content":"Be concise."},{"role":"user","content":"Summarize the example","timestamp":1100}],"output":[{"role":"assistant","content":[{"type":"text","text":"The example is short."}]}],"usage":{"input_tokens":8,"output_tokens":5,"cache_read_input_tokens":2,"cache_creation_input_tokens":0,"reasoning_tokens":1},"cost_usd":0.0000332,"status":"ok"},
+    {"type":"turn_end","turn_id":"t1","ts_ns":1140000000,"output":[{"type":"text","text":"The example is short."}],"status":"ok"}
+  ]
+}

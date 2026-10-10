@@ -23,6 +23,9 @@ struct Transcript {
     cursor: Cursor, current: Option<Response>, input: Vec<Value>,
     seen: BTreeSet<String>, parent: Option<String>, turn: Option<String>, terminal_turn: Option<String>,
     stable_since: u64, last_offset: u64,
+    /// Timestamp of the last user row (prompt or tool result): when the next request was sent. The assistant row only
+    /// records completion, so without this a chat's latency would be the few ms between streamed rows.
+    #[serde(default)] request_ts: u64,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct Response {
@@ -197,7 +200,8 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
                     let same=file.current.as_ref().is_some_and(|response|response.id==id || (message_id.is_some() && response.message_id==message_id) || (request.is_some() && response.request_id==request));
                     if !same {settle(file,events);}
                     let Some(turn)=file.turn.clone() else {continue;};
-                    let response=file.current.get_or_insert_with(||Response {id,message_id,request_id:request,turn,start:ts,end:ts,model:string(message,"model"),input:file.input.clone(),..Default::default()});
+                    let start=if file.request_ts>0 && file.request_ts<=ts {file.request_ts} else {ts};
+                    let response=file.current.get_or_insert_with(||Response {id,message_id,request_id:request,turn,start,end:ts,model:string(message,"model"),input:file.input.clone(),..Default::default()});
                     let row_id=string(&row,"uuid").unwrap_or_else(||format!("{:x}",Sha256::digest(line.as_bytes())));
                     if response.rows.insert(row_id) {
                         if let Some(parts)=message["content"].as_array() {response.parts.extend(parts.iter().cloned());}
@@ -208,7 +212,7 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
                     if matches!(message["stop_reason"].as_str(),Some("end_turn"|"max_tokens"|"stop_sequence")) {file.terminal_turn=Some(response.turn.clone());}
                 },
                 Some("user") => {
-                    settle(file,events);
+                    settle(file,events);file.request_ts=ts;
                     if let Some(message)=row.get("message") {if file.input.last()!=Some(message) {file.input.push(message.clone());}}
                     if let Some(agent)=string(&row["toolUseResult"],"agentId").or_else(||string(&row["toolUseResult"],"agent_id")) {
                         let parent=string(&row,"sourceToolUseID").or_else(||row["message"]["content"].as_array().and_then(|parts|parts.iter().find_map(|part|string(part,"tool_use_id"))));

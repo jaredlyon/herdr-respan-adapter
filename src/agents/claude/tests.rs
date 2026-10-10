@@ -33,6 +33,18 @@ fn fixture_batch_golden_and_streamed_final_usage() {
 }
 
 #[test]
+fn chat_starts_when_the_request_was_sent() {
+    // The transcript records only completion rows; latency is measured from the preceding user row (live-check finding).
+    let tmp=crate::tests::Temp::new();std::fs::write(tmp.path.join("main.jsonl"),"").unwrap();
+    let payloads=payloads(&tmp);let mut state=Session {id:"session-fixture".into(),..Default::default()};let mut events=Vec::new();
+    process(&mut state,&payloads[0],1,&mut events).unwrap();
+    std::fs::write(tmp.path.join("main.jsonl"),include_str!("fixtures/streamed.jsonl")).unwrap();
+    process(&mut state,&payloads[5],10,&mut events).unwrap();close_turn(&mut state,1_000_000_000,false,&mut events);
+    let (start,end)=events.iter().find_map(|e|match e {Event::Chat {start_ns,end_ns,..}=>Some((*start_ns,*end_ns)),_=>None}).unwrap();
+    assert_eq!((start,end),(timestamp("2026-10-09T12:00:00.000Z").unwrap(),timestamp("2026-10-09T12:00:02.000Z").unwrap()));
+}
+
+#[test]
 fn hooks_to_spool_tree_and_subagent_stop_before_tool_result() {
     let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let payloads=payloads(&tmp);
     std::fs::write(tmp.path.join("main.jsonl"),"").unwrap();send(&mut ctx,&payloads[0]);send(&mut ctx,&payloads[1]);send(&mut ctx,&payloads[2]);

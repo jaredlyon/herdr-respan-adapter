@@ -200,7 +200,8 @@ struct Tail {
 }
 fn remember_tail(ctx: &HookCtx, path: &Path, session: &str, turn: &str, parent: Option<&str>, cwd: &str) -> Result<()> {
     let path = path.to_string_lossy().into_owned();
-    ctx.save(&key("tail",&path),&Tail {path,session:session.into(),turn:turn.into(),parent:parent.map(str::to_owned),cwd:cwd.into(),until_ns:ctx.now_ns().saturating_add(6_000_000_000),metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active})
+    ctx.save(&key("tail",&path),&Tail {path,session:session.into(),turn:turn.into(),parent:parent.map(str::to_owned),cwd:cwd.into(),until_ns:ctx.now_ns().saturating_add(6_000_000_000),metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active})?;
+    ctx.mark_settle_pending()
 }
 fn settle(ctx: &mut HookCtx) -> Result<bool> {
     let _lock = ctx.lock("qwen-native")?;

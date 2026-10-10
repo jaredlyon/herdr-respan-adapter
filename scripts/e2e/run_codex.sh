@@ -4,7 +4,6 @@ export HRA_BIN=${HRA_BIN:-$(cd "$(dirname "$0")/../.." && pwd)/target/release/he
 source "$(dirname "$0")/lib.sh"
 hra_init codex
 hra_start_mocks
-REAL_HOME=$HOME
 export CODEX_HOME="$HRA_ROOT/codex" OPENAI_API_KEY=hra-e2e-dummy
 mkdir -p "$CODEX_HOME" "$HRA_ROOT/home" "$HRA_ROOT/xdg-cache" "$HRA_ROOT/xdg-data" "$HRA_ROOT/xdg-state"
 python3 - "$HRA_ROOT" "$HRA_PROVIDER_URL" <<'PY'
@@ -19,7 +18,7 @@ hooks = {'hooks': {e:[{'hooks':[{'type':'command','command':command,'timeout':3 
 (root/'codex/config.toml').write_text(f'''model = "gpt-4.1"
 model_provider = "mock"
 approval_policy = "never"
-sandbox_mode = "read-only"
+sandbox_mode = "danger-full-access"
 [features]
 hooks = true
 shell_snapshot = false
@@ -110,12 +109,18 @@ assert len([r for r in requests if r['method']=='POST' and r['path']=='/v1/respo
 (root/'received.before.json').write_text(json.dumps({p.name:p.read_text() for p in (root/'otlp').glob('*.json')}))
 print(f'Asserted {len(spans)} spans, one chat per {len(usage_records)} token_usage_records')
 PY
-(cd "$HRA_ROOT/work" && eval "$command codex exec --skip-git-repo-check --json 'RUN_TOOL: execute echo hra-e2e then reply.'") >"$HRA_ROOT/outside.out" 2>"$HRA_ROOT/outside.err"
+# Close stdin: codex exec otherwise waits for appended piped input under SSH.
+(cd "$HRA_ROOT/work" && eval "$command timeout 120 codex exec --skip-git-repo-check --json 'RUN_TOOL: execute echo hra-e2e then reply.'") </dev/null >"$HRA_ROOT/outside.out" 2>"$HRA_ROOT/outside.err"
 hra_flush
 python3 - "$HRA_ROOT" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
 assert json.loads((root/'received.before.json').read_text())=={p.name:p.read_text() for p in (root/'otlp').glob('*.json')}
+requests = [json.loads(l) for l in (root/'provider.jsonl').read_text().splitlines()]
+assert len([r for r in requests if r['method']=='POST' and r['path']=='/v1/responses']) == 5
+events = [json.loads(l) for l in (root/'outside.out').read_text().splitlines()]
+assert any(e['type']=='turn.completed' for e in events), events
+assert any(e['type']=='item.completed' and e.get('item',{}).get('type')=='command_execution' and 'hra-e2e' in e['item']['aggregated_output'] and e['item']['exit_code']==0 for e in events), events
 print('Outside-herdr gate: no new OTLP delivered')
 PY
 "$HRA_BIN" remove codex --state-dir "$HRA_ROOT/state" --config-dir "$HRA_ROOT/config"

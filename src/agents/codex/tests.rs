@@ -136,3 +136,47 @@ fn user_provider_base_url_detection_is_read_only() {
     assert!(!respan_provider(&path, Some("custom")));
     std::fs::write(&config, "model_provider='custom'\n[model_providers.custom]\nbase_url='https://api.respan.ai/v1'\n").unwrap(); assert!(respan_provider(&path, Some("custom")));
 }
+
+#[test]
+fn captured_live_hooks_rollouts_exact_usage_and_replay() {
+    let hooks: Vec<Value> = include_str!("fixtures/live-hooks.jsonl").lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    for (fixture, prompt, chat_count, tool_count) in [
+        (include_str!("fixtures/live-text.jsonl"), "Say the deterministic mock text.", 1, 0),
+        (include_str!("fixtures/live-tool.jsonl"), "RUN_TOOL: execute echo hra-e2e then reply.", 2, 1),
+    ] {
+        let tmp = crate::tests::Temp::new(); let mut ctx = ctx(&tmp);
+        let rows: Vec<Value> = fixture.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let session = rows[0]["payload"]["id"].as_str().unwrap();
+        let turn = rows.iter().find(|v| v["type"] == "turn_context").unwrap()["payload"]["turn_id"].as_str().unwrap();
+        let path = tmp.path.join("rollout-live.jsonl"); std::fs::write(&path, fixture).unwrap();
+        let captured: Vec<_> = hooks.iter().filter(|v| v["session_id"] == session).collect();
+        assert!(captured.iter().any(|v| v["prompt"] == prompt));
+        for _ in 0..2 {
+            for payload in &captured {
+                let mut payload = (*payload).clone(); payload["transcript_path"] = json!(path);
+                hook(&mut ctx, &serde_json::to_vec(&payload).unwrap()).unwrap();
+            }
+            assert!(!settle(&mut ctx).unwrap());
+        }
+        let spans = records(&tmp);
+        let chats: Vec<_> = spans.iter().filter(|s| s.log_type == "chat").collect();
+        let usage: Vec<_> = rows.iter().filter(|v| v["type"] == "token_usage_record").collect();
+        assert_eq!(chats.len(), chat_count); assert_eq!(chats.len(), usage.len());
+        assert_eq!(spans.iter().filter(|s| s.log_type == "agent").count(), 1);
+        let tools: Vec<_> = spans.iter().filter(|s| s.log_type == "tool").collect(); assert_eq!(tools.len(), tool_count);
+        let parent = format!("codex:{session}:{turn}:turn");
+        for chat in chats {
+            assert_eq!(chat.parent_key.as_deref(), Some(parent.as_str()));
+            assert_eq!(chat.model.as_deref(), Some("gpt-4.1")); assert_eq!(chat.provider.as_deref(), Some("mock"));
+            assert_eq!(chat.usage.input_tokens, Some(11)); assert_eq!(chat.usage.output_tokens, Some(7));
+            assert_eq!(chat.usage.cache_read_input_tokens, Some(3)); assert_eq!(chat.usage.reasoning_tokens, Some(0));
+            assert_eq!(chat.metadata.get("codex.usage_source"), Some(&json!("token_usage_record")));
+            assert!(usage.iter().any(|v| chat.span_key.ends_with(v["payload"]["response_id"].as_str().unwrap())));
+        }
+        for tool in tools {
+            assert_eq!(tool.parent_key.as_deref(), Some(parent.as_str()));
+            assert!(tool.input.as_ref().unwrap().to_string().contains("echo hra-e2e"));
+            assert!(tool.output.as_ref().unwrap().to_string().contains("hra-e2e"));
+        }
+    }
+}

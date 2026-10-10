@@ -41,6 +41,43 @@ fn endpoint(config: &Config, protocol: &str) -> String {
         base.trim_end_matches('/').into()
     }
 }
+fn codex_provider(home: &std::path::Path, args: &[String]) -> Result<Option<(String, String)>> {
+    let config: toml::Value = match fs::read_to_string(home.join("config.toml")) {
+        Ok(text) => toml::from_str(&text)?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Value::Table(Default::default()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut overrides = BTreeMap::new();
+    let mut profile = None;
+    let mut arguments = args.iter();
+    while let Some(arg) = arguments.next() {
+        let setting = match arg.as_str() {
+            "-c" | "--config" => arguments.next().map(String::as_str),
+            "-p" | "--profile" => {
+                profile = arguments.next().map(String::as_str);
+                None
+            }
+            _ => arg.strip_prefix("--config="),
+        };
+        if let Some((key, value)) = setting.and_then(|s| s.split_once('=')) {
+            let parsed = toml::from_str::<toml::Value>(&format!("value={value}"))
+                .ok().and_then(|v| v.get("value").cloned())
+                .unwrap_or_else(|| toml::Value::String(value.into()));
+            overrides.insert(key.trim(), parsed);
+        }
+    }
+    let provider = overrides.get("model_provider")
+        .or_else(|| profile.and_then(|p| config.get("profiles")?.get(p)?.get("model_provider")))
+        .or_else(|| config.get("model_provider"))
+        .and_then(toml::Value::as_str).unwrap_or("openai");
+    if provider == "openai" { return Ok(None); }
+    let key = format!("model_providers.{provider}.base_url");
+    let base = overrides.get(key.as_str())
+        .or_else(|| config.get("model_providers")?.get(provider)?.get("base_url"))
+        .and_then(toml::Value::as_str)
+        .ok_or("custom Codex provider needs base_url for proxy routing")?;
+    Ok(Some((provider.into(), base.into())))
+}
 fn build_launch(
     paths: &Paths,
     config: &Config,
@@ -87,13 +124,31 @@ fn build_launch(
         },
         "claude"=>{launch.env.insert("ANTHROPIC_BASE_URL".into(),url("anthropic"));launch.upstream.insert("anthropic".into(),upstream("ANTHROPIC_BASE_URL",endpoint(config,"anthropic")));},
         "codex"=>{
-            launch.args.splice(0..0,["-c".into(),format!("openai_base_url={}",serde_json::to_string(&url("openai"))?)]);
-            // Only mode is inspected; credentials never enter registration, logs, or spans.
+            // Only mode and endpoint are inspected; credentials never enter registration.
             let home=env.get("CODEX_HOME").map(std::path::PathBuf::from).unwrap_or(crate::paths::home()?.join(".codex"));
-            let chatgpt=fs::read(home.join("auth.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).is_some_and(|v|v.get("auth_mode").and_then(Value::as_str)==Some("chatgpt")||v.get("tokens").is_some());
-            if chatgpt&&!env.get("OPENAI_API_KEY").is_some_and(|v|!v.is_empty()) {
-                launch.upstream.insert("openai".into(),"https://chatgpt.com/backend-api/codex".into());
-            }else{launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL",endpoint(config,"openai")));}
+            if let Some((provider, original))=codex_provider(&home,&launch.args)? {
+                launch.upstream.insert("openai".into(), original);
+                let key=format!("model_providers.{provider}.base_url");
+                // A later original CLI override must not bypass interception.
+                let mut index=0;
+                while index<launch.args.len() {
+                    let paired=matches!(launch.args[index].as_str(),"-c"|"--config");
+                    let setting=if paired {launch.args.get(index+1).map(String::as_str)} else {launch.args[index].strip_prefix("--config=")};
+                    if setting.and_then(|s|s.split_once('=')).is_some_and(|(k,_)|k.trim()==key) {
+                        launch.args.drain(index..index+if paired {2} else {1});
+                    }else{index+=1;}
+                }
+                let position=launch.args.iter().position(|a|a=="exec").map_or(0,|i|i+1);
+                launch.args.splice(position..position,["-c".into(),format!("{key}={}",serde_json::to_string(&url("openai"))?)]);
+            }else{
+                let position=launch.args.iter().position(|a|a=="exec").map_or(0,|i|i+1);
+                launch.args.splice(position..position,["-c".into(),format!("openai_base_url={}",serde_json::to_string(&url("openai"))?)]);
+                let chatgpt=fs::read(home.join("auth.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).is_some_and(|v|v.get("auth_mode").and_then(Value::as_str)==Some("chatgpt")||v.get("tokens").is_some());
+                if chatgpt&&!env.get("OPENAI_API_KEY").is_some_and(|v|!v.is_empty()) {
+                    let configured=config.proxy.upstream.get("openai").filter(|u|u.trim_end_matches('/')!="https://api.openai.com");
+                    launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL",configured.map(|_|endpoint(config,"openai")).unwrap_or_else(||"https://chatgpt.com/backend-api/codex".into())));
+                }else{launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL",endpoint(config,"openai")));}
+            }
         },
         "gemini"=>{
             launch.env.insert("GOOGLE_GEMINI_BASE_URL".into(),url("gemini"));
@@ -117,12 +172,29 @@ fn build_launch(
         },
         "qwen"=>{set_protocol(&mut launch.env,"openai",&url("openai"));launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL","https://dashscope.aliyuncs.com/compatible-mode/v1".into()));},
         "kimi"=>{
-            launch.env.insert("KIMI_BASE_URL".into(),url("openai"));set_protocol(&mut launch.env,"openai",&url("openai"));
-            launch.upstream.insert("openai".into(),upstream("KIMI_BASE_URL",upstream("OPENAI_BASE_URL","https://api.kimi.com/coding/v1".into())));
+            if env.get("HERDR_RESPAN").is_some_and(|v|v=="off") {launch.proxy=false;}
+            else{
+                if !env.get("KIMI_MODEL_NAME").is_some_and(|v|!v.is_empty())
+                    || !env.get("KIMI_MODEL_API_KEY").is_some_and(|v|!v.is_empty()) {
+                    return Err("run kimi requires existing KIMI_MODEL_NAME and KIMI_MODEL_API_KEY env mode: Kimi Code config-file providers cannot be redirected per invocation; its native adapter already records per-step usage".into());
+                }
+                if launch.args.iter().any(|a|a=="-m"||a=="--model"||a.starts_with("--model=")) {
+                    return Err("run kimi cannot proxy a -m/--model config-file alias; use KIMI_MODEL_NAME env mode or the native adapter".into());
+                }
+                let kind=env.get("KIMI_MODEL_PROVIDER_TYPE").map(String::as_str).unwrap_or("kimi");
+                let protocol=match kind {"kimi"|"openai"=>"openai","anthropic"=>"anthropic",_=>return Err("run kimi supports KIMI_MODEL_PROVIDER_TYPE kimi, openai or anthropic".into())};
+                let fallback=if kind=="kimi"&&config.proxy.upstream.get("openai").is_none_or(|u|u.trim_end_matches('/')=="https://api.openai.com") {"https://api.moonshot.ai/v1".into()}else{endpoint(config,protocol)};
+                launch.upstream.insert(protocol.into(),upstream("KIMI_MODEL_BASE_URL",fallback));
+                launch.env.insert("KIMI_MODEL_BASE_URL".into(),url(protocol));
+            }
         },
         "grok"=>{
-            for key in ["GROK_MODELS_BASE_URL","GROK_XAI_API_BASE_URL"]{launch.env.insert(key.into(),url("openai"));}
-            launch.upstream.insert("openai".into(),upstream("GROK_MODELS_BASE_URL",upstream("GROK_XAI_API_BASE_URL","https://api.x.ai/v1".into())));
+            for key in ["GROK_MODELS_BASE_URL","GROK_XAI_API_BASE_URL","GROK_CLI_CHAT_PROXY_BASE_URL"]{launch.env.insert(key.into(),url("openai"));}
+            let configured=config.proxy.upstream.get("openai").filter(|u|u.trim_end_matches('/')!="https://api.openai.com");
+            let fallback=configured.map(|_|endpoint(config,"openai")).unwrap_or_else(||"https://api.x.ai/v1".into());
+            launch.upstream.insert("openai".into(),upstream("GROK_MODELS_BASE_URL",upstream("GROK_XAI_API_BASE_URL",fallback.clone())));
+            launch.env.insert("GROK_CLI_CHAT_PROXY_BASE_URL".into(),format!("{}/__provider/grok-chat",url("openai")));
+            launch.upstream.insert("openai/grok-chat".into(),upstream("GROK_CLI_CHAT_PROXY_BASE_URL",fallback));
         },
         "copilot"=>{
             launch.env.insert("COPILOT_OTEL_FILE_EXPORTER_PATH".into(),paths.state.join("agents/copilot/otel.jsonl").to_string_lossy().into());
@@ -453,6 +525,9 @@ mod tests {
                 r#"{"provider":{"openai":{"options":{"apiKey":"keep"}}},"model":"openai/m"}"#
                     .into(),
             ),
+            ("KIMI_MODEL_NAME".into(), "mock-model".into()),
+            ("KIMI_MODEL_API_KEY".into(), "existing-synthetic-key".into()),
+            ("KIMI_MODEL_PROVIDER_TYPE".into(), "openai".into()),
         ]);
         for kind in [
             "claude", "codex", "gemini", "pi", "omp", "opencode", "qwen", "kimi", "grok",
@@ -495,7 +570,7 @@ mod tests {
                     assert_eq!(value["model"], "openai/m");
                 }
                 "qwen" => assert_eq!(launch.env["OPENAI_BASE_URL"], format!("{base}/openai")),
-                "kimi" => assert_eq!(launch.env["KIMI_BASE_URL"], format!("{base}/openai")),
+                "kimi" => assert_eq!(launch.env["KIMI_MODEL_BASE_URL"], format!("{base}/openai")),
                 "grok" => assert_eq!(launch.env["GROK_MODELS_BASE_URL"], format!("{base}/openai")),
                 "copilot" => {
                     assert!(!launch.proxy);
@@ -587,5 +662,62 @@ mod tests {
         assert!(!registry.env.contains_key("COPILOT_PROVIDER_BASE_URL"));
         assert!(validate_upstream("https://user:secret@example.invalid").is_err());
         assert!(validate_upstream("https://example.invalid?key=secret").is_err());
+    }
+    #[test]
+    fn codex_custom_provider_and_cli_endpoint_are_routed_without_credentials() {
+        let temp=crate::tests::Temp::new();
+        let paths=Paths {state:temp.path.join("state"),config:temp.path.join("config")};
+        let home=temp.path.join("codex");fs::create_dir_all(&home).unwrap();
+        let contents="model_provider=\"mock\"\n[model_providers.mock]\nbase_url=\"http://127.0.0.1:8123/v1\"\nenv_key=\"EXISTING_KEY\"\n[profiles.other]\nmodel_provider=\"second\"\n[model_providers.second]\nbase_url=\"http://127.0.0.1:8124/v1\"\n";
+        fs::write(home.join("config.toml"),contents).unwrap();
+        let env=BTreeMap::from([("CODEX_HOME".into(),home.to_string_lossy().into_owned())]);
+        let base="http://127.0.0.1:123/r/run";
+        let config=Config::default();
+        let launch=build_launch(&paths,&config,&["codex".into(),"exec".into(),"prompt".into()],base,&env).unwrap();
+        assert_eq!(launch.upstream["openai"],"http://127.0.0.1:8123/v1");
+        assert_eq!(launch.args[0],"exec");
+        assert_eq!(launch.args[2],format!("model_providers.mock.base_url=\"{base}/openai\""));
+        let args=["codex","--profile","other","exec","--config=model_providers.second.base_url=\"http://127.0.0.1:9999/v1\"","prompt"].map(String::from);
+        let launch=build_launch(&paths,&config,&args,base,&env).unwrap();
+        assert_eq!(launch.upstream["openai"],"http://127.0.0.1:9999/v1");
+        assert_eq!(launch.args.iter().filter(|a|a.contains("model_providers.second.base_url")).count(),1);
+        assert!(launch.env.is_empty());
+        assert_eq!(fs::read_to_string(home.join("config.toml")).unwrap(),contents);
+    }
+    #[test]
+    fn grok_routes_auxiliary_and_honors_configured_upstreams() {
+        let temp=crate::tests::Temp::new();
+        let paths=Paths {state:temp.path.join("state"),config:temp.path.join("config")};
+        let mut config=Config::default();let base="http://127.0.0.1:123/r/run";
+        let launch=build_launch(&paths,&config,&["grok".into()],base,&BTreeMap::new()).unwrap();
+        assert_eq!(launch.upstream["openai"],"https://api.x.ai/v1");
+        assert_eq!(launch.upstream["openai/grok-chat"],"https://api.x.ai/v1");
+        config.proxy.upstream.insert("openai".into(),"http://127.0.0.1:8123".into());
+        let env=BTreeMap::from([("GROK_CLI_CHAT_PROXY_BASE_URL".into(),"http://127.0.0.1:8124/v1".into())]);
+        let launch=build_launch(&paths,&config,&["grok".into()],base,&env).unwrap();
+        assert_eq!(launch.upstream["openai"],"http://127.0.0.1:8123/v1");
+        assert_eq!(launch.upstream["openai/grok-chat"],"http://127.0.0.1:8124/v1");
+        assert_eq!(launch.env["GROK_MODELS_BASE_URL"],format!("{base}/openai"));
+        assert_eq!(launch.env["GROK_XAI_API_BASE_URL"],format!("{base}/openai"));
+        assert_eq!(launch.env["GROK_CLI_CHAT_PROXY_BASE_URL"],format!("{base}/openai/__provider/grok-chat"));
+    }
+    #[test]
+    fn kimi_only_redirects_existing_environment_model_without_moving_keys() {
+        let temp=crate::tests::Temp::new();
+        let paths=Paths {state:temp.path.join("state"),config:temp.path.join("config")};
+        let config=Config::default();let base="http://127.0.0.1:123/r/run";
+        let args=["kimi".into(),"--prompt".into(),"hello".into()];
+        assert!(build_launch(&paths,&config,&args,base,&BTreeMap::new()).unwrap_err().to_string().contains("native adapter"));
+        let mut env=BTreeMap::from([("KIMI_MODEL_NAME".into(),"existing-model".into()),("KIMI_MODEL_API_KEY".into(),"existing-synthetic-key".into()),("KIMI_MODEL_BASE_URL".into(),"http://127.0.0.1:8123/v1".into())]);
+        for kind in ["kimi","openai","anthropic"] {
+            env.insert("KIMI_MODEL_PROVIDER_TYPE".into(),kind.into());
+            let launch=build_launch(&paths,&config,&args,base,&env).unwrap();
+            let protocol=if kind=="anthropic" {"anthropic"}else{"openai"};
+            assert_eq!(launch.env,BTreeMap::from([("KIMI_MODEL_BASE_URL".into(),format!("{base}/{protocol}"))]));
+            assert_eq!(launch.upstream[protocol],"http://127.0.0.1:8123/v1");
+        }
+        assert!(build_launch(&paths,&config,&["kimi".into(),"-m".into(),"config-alias".into()],base,&env).is_err());
+        env.insert("HERDR_RESPAN".into(),"off".into());env.remove("KIMI_MODEL_NAME");
+        assert!(!build_launch(&paths,&config,&args,base,&env).unwrap().proxy);
     }
 }

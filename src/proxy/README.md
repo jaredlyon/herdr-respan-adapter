@@ -7,13 +7,13 @@ No agent setup edits are made by this slice. No key variable, OAuth store, or us
 | Agent | Invocation override |
 |---|---|
 | Claude | `ANTHROPIC_BASE_URL`; original upstream preserved |
-| Codex | prepend `-c openai_base_url="<local>"`; API-key `/v1` or ChatGPT `/backend-api/codex`, retaining bearer/account/beta headers |
+| Codex | built-in provider: prepend `-c openai_base_url="<local>"`; selected custom provider: invocation-only `-c model_providers.<id>.base_url="<local>"`, preserving its configured upstream and credentials; selected profile and CLI endpoint overrides are honored |
 | Gemini | `GOOGLE_GEMINI_BASE_URL` plus separate `CODE_ASSIST_ENDPOINT` route to Code Assist |
 | pi / omp | temporary `-e <state>/proxy/runs/<run>/provider.js`; `registerProvider(provider, {baseUrl})` only, plus the current in-memory model object's URL; no `setModel` or auth override |
 | OpenCode | merge V1 `provider.*.options.baseURL` and V2 `providers.*.settings.baseURL` into invocation-local `OPENCODE_CONFIG_CONTENT`, preserving its other fields |
 | Qwen | `OPENAI_BASE_URL`, `OPENAI_API_BASE`; documented OpenAI-compatible/API-key route (legacy OAuth is discontinued) |
-| Kimi | `KIMI_BASE_URL`, `OPENAI_BASE_URL`, `OPENAI_API_BASE` |
-| Grok | `GROK_MODELS_BASE_URL`, `GROK_XAI_API_BASE_URL` (not the login/session-service endpoint) |
+| Kimi Code 2.x | only existing `KIMI_MODEL_NAME` + `KIMI_MODEL_API_KEY` environment-model mode: replace `KIMI_MODEL_BASE_URL`, preserving the existing model, provider type and key; config-file aliases are refused |
+| Grok | `GROK_MODELS_BASE_URL`, `GROK_XAI_API_BASE_URL`, and `GROK_CLI_CHAT_PROXY_BASE_URL`; the auxiliary chat endpoint retains its separate upstream; `[proxy.upstream].openai` overrides the default xAI upstream |
 | Copilot | `COPILOT_OTEL_FILE_EXPORTER_PATH=<state>/agents/copilot/otel.jsonl`; supported legacy BYOK env routing additionally overrides `COPILOT_PROVIDER_BASE_URL` without changing provider type/auth; registry-based BYOK remains native OTel |
 
 `$STATE/proxy.json` contains PID, port, start timestamp, and binary version. `$STATE/proxy/runs/<128-bit-random-run>.json` contains the wrapper PID, agent, non-secret upstream URLs and inherited metadata. Unknown/expired run capabilities are rejected. The pi/omp asset registers fixed upstreams under internal `/<protocol>/__provider/<provider>/` routes; clients cannot name arbitrary upstream URLs. Upstream URLs containing credentials, query strings, or fragments are rejected rather than persisted. Run JSON and temporary extensions are removed on normal/interrupt exit; stale registrations are reclaimed by the daemon. The daemon exits after its configured idle timeout only when no requests or live runs remain.
@@ -24,8 +24,9 @@ One `source=proxy`, `log_type=chat` record is emitted per model request, with ru
 
 ## Limits
 
-- This is local mock/source verification, **not** live provider or subscription authentication verification. No providers, Respan endpoints, real agent runs or user configs are used in tests.
-- Model protocols outside Anthropic/OpenAI/Gemini are not translated. Provider policy/config precedence can defeat an environment override (especially Qwen custom registries, OpenCode OAuth rewrites, Grok policy pins); use native adapters for those paths rather than claiming complete request capture.
+- Mock qualification is not live provider/subscription authentication or real Respan qualification. Tests never use real keys or user configs.
+- Kimi Code config-file providers cannot be redirected per invocation. `run kimi` refuses that mode rather than moving credentials or suppressing native chats; its native adapter already records per-step usage. With an existing `KIMI_MODEL_*` environment model, the wrapper changes only the endpoint. Do not pass `-m`/`--model`, which would select a config-file alias instead.
+- Model protocols outside Anthropic/OpenAI/Gemini are not translated. Provider policy/config precedence can defeat an environment override (especially Qwen custom registries, OpenCode OAuth rewrites, Grok policy pins). Grok explicit per-model `base_url` overrides cannot be redirected without editing config: its `GROK_CONFIG` overlay forbids network redirection. Use its native adapter for that configuration.
 - pi/omp routing observes the selected model at session start and before each user agent run. Auxiliary calls using unrelated, independently cached model objects may require another native adapter source. The extension changes only the live model URL and provider registry in memory.
 - Capture parsing is bounded to 8 MiB per JSON/SSE event/WebSocket message and request copy; content text is bounded to the capture ceiling, and Core alone applies the configurable field cap and scrubbing. Oversized/malformed observations lose details, not traffic. Full upstream request/response bytes remain untouched. WebSocket compressed messages are forwarded but not parsed; current Responses traffic does not require negotiated compression.
 - Timings are local proxy wall-clock observations, not provider server timings. No tokens or model identity are invented for malformed/unknown bodies. No count-token, model discovery, health or OAuth helper request is mislabeled as model generation.

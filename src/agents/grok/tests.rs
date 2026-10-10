@@ -220,3 +220,52 @@ fn metadata_only_native_state_omits_all_content() {
     let saved = std::fs::read_to_string(ctx.state_dir().join("native-metadata.json")).unwrap();
     assert!(!saved.contains("private-"));
 }
+
+#[test]
+fn live_mock_hooks_replay_native_and_proxy_without_duplicate_shutdown_chats() {
+    for proxy in [false, true] {
+        let tmp = crate::tests::Temp::new();
+        let mut ctx = context(&tmp, proxy);
+        let mut state = State::default();
+        let hooks: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+        let rows: Vec<_> = include_str!("fixtures/live-chat_history.jsonl").lines().collect();
+        let raw = tmp.path.join("chat_history.jsonl");
+        std::fs::write(&raw, b"").unwrap();
+        for mut payload in hooks {
+            assert!(identity(&payload, Some("live-tool-session"), None));
+            if payload.get("transcriptPath").is_some() {
+                payload["transcriptPath"] = json!(tmp.path.join("updates.jsonl"));
+            }
+            match text(&payload, "hookEventName") {
+                Some("pre_tool_use") => std::fs::write(&raw, format!("{}\n", rows[..2].join("\n"))).unwrap(),
+                Some("stop") if text(&payload, "reason") == Some("end_turn") =>
+                    std::fs::write(&raw, include_bytes!("fixtures/live-chat_history.jsonl")).unwrap(),
+                _ => {}
+            }
+            let now = timestamp(text(&payload, "timestamp").unwrap()).unwrap();
+            let batch = normalize(&payload, &mut state, now, proxy).unwrap();
+            bridge::ingest(&mut ctx, batch.clone()).unwrap();
+            bridge::ingest(&mut ctx, batch).unwrap();
+        }
+        let all = records(&tmp);
+        assert_eq!(all.len(), if proxy { 2 } else { 4 });
+        assert!(all.iter().all(|r| r.usage == Usage::default()));
+        let turn = all.iter().find(|r| r.log_type == "agent").unwrap();
+        let tool = all.iter().find(|r| r.log_type == "tool").unwrap();
+        assert_eq!(tool.name, "run_terminal_command");
+        assert_eq!(tool.parent_key.as_deref(), Some(turn.span_key.as_str()));
+        assert!(tool.end_ns > tool.start_ns);
+        assert_eq!(tool.input.as_ref().unwrap()["value"]["command"], "echo hra-e2e");
+        assert_eq!(tool.output.as_ref().unwrap()["value"]["exit_code"], 0);
+        assert!(tool.output.as_ref().unwrap()["value"]["output_for_prompt"].as_str().unwrap().contains("hra-e2e"));
+        let chats: Vec<_> = all.iter().filter(|r| r.log_type == "chat").collect();
+        assert_eq!(chats.len(), if proxy { 0 } else { 2 });
+        for chat in chats {
+            assert_eq!(chat.parent_key.as_deref(), Some(turn.span_key.as_str()));
+            assert_eq!(chat.model.as_deref(), Some("mock-model"));
+        }
+        let mut late = Vec::new();
+        transcript(&mut state, turn.end_ns, proxy, &mut late).unwrap();
+        assert!(late.is_empty());
+    }
+}

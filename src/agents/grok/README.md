@@ -1,6 +1,6 @@
 # Grok Build
 
-Targets the official [xai-org/grok-build](https://github.com/xai-org/grok-build), not third-party similarly named CLIs. Source contract pinned to `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`; an earliest release supporting every field is not established. This adapter is fixture-tested, not live-runtime verified.
+Targets the official [xai-org/grok-build](https://github.com/xai-org/grok-build), not third-party similarly named CLIs. Source contract pinned to `2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8`; an earliest release supporting every field is not established. Native runtime is qualified on Linux aarch64 with Grok Build 1.0.50 (`c58f321264ba`) and herdr 0.9.3 against loopback-only providers; real provider authentication remains unverified.
 
 ## Setup
 
@@ -33,4 +33,10 @@ All links pin the inspected commit:
 - [Session storage layout](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/docs/user-guide/17-sessions.md#L24-L54)
 - [Spawning task identity and typed result](https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs#L450-L770)
 
-See [fixture provenance](fixtures/README.md). No provider/Respan calls, real agent sessions, or real agent config edits are part of these tests.
+See [fixture provenance](fixtures/README.md). Source-fixture tests make no provider calls. The real-agent E2E runs isolated Grok sessions against loopback mocks only; it never edits the user's configs or calls Respan/providers.
+
+## Real-agent mock qualification
+
+Run `HRA_BIN="$PWD/target/release/herdr-respan" bash scripts/e2e/run_grok.sh` after `cargo build --release`. The driver isolates HOME/XDG/GROK_HOME, installs capture hooks alongside the adapter, and owns only the `hra-e2e-grok` herdr session and its loopback mocks/proxy daemon. Native endpoint overrides include **all three** `GROK_MODELS_BASE_URL`, `GROK_XAI_API_BASE_URL`, and `GROK_CLI_CHAT_PROXY_BASE_URL`. The primary custom model uses the recipe's explicit mock `base_url`; auxiliary title Responses and turn-summary Chat calls remain local too. Only `run_terminal_command` is advertised; canned responses execute `echo hra-e2e`.
+
+Native acceptance asserts two traces: text → one turn/one chat; tool → one turn/two chats/one successful echo tool. Every native chat lacks usage rather than fabricating zero tokens. IDs are unique, all children are parented, native thread IDs and pane/workspace/machine metadata are present, an outside-herdr tool run delivers nothing, and `remove` restores hook JSON semantically. Grok itself adds `[marketplace] default_skills_installs_purged = true` on first launch; model-config removal comparison snapshots immediately before `remove` to isolate plugin effects from this native mutation. Runtime evidence stays under `~/.hra-e2e/grok/run-*`.

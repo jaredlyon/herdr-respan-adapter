@@ -1,0 +1,4 @@
+{"type":"user","content":[{"type":"text","text":"<user_query>\nRUN_TOOL: execute echo hra-e2e then reply.\n</user_query>"}],"prompt_index":0}
+{"type":"assistant","content":"","tool_calls":[{"id":"call_hra_8","name":"run_terminal_command","arguments":"{\"command\": \"echo hra-e2e\", \"description\": \"Harmless mock E2E echo\"}"}],"model_id":"mock-model"}
+{"type":"tool_result","tool_call_id":"call_hra_8","content":"exit: 0\nhra-e2e\n"}
+{"type":"assistant","content":"hra-e2e mock response","model_id":"mock-model"}

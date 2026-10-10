@@ -133,7 +133,7 @@ fn relocation_and_empty_config_env() {
 fn relocation_env_child() {
     if std::env::var_os("CLAUDE_RELOCATION_CHILD").is_none() {return;}
     let tmp=crate::tests::Temp::new();let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap();
-    let value=std::env::var("CLAUDE_CONFIG_DIR").unwrap();let expected=if value.is_empty() {ctx.home.join(".claude/settings.json")} else if value.starts_with("~/") {ctx.home.join(&value[2..]).join("settings.json")} else {PathBuf::from(value).join("settings.json")};
+    let value=std::env::var("CLAUDE_CONFIG_DIR").unwrap();let expected=if value.is_empty() {ctx.home.join(".claude/settings.json")} else if let Some(rest)=value.strip_prefix("~/") {ctx.home.join(rest).join("settings.json")} else {PathBuf::from(value).join("settings.json")};
     for edit in setup::plan(&ctx).unwrap().edits {match edit {crate::setup::Edit::JsonInsert {file,..}=>assert_eq!(file,expected),_=>panic!("unexpected setup edit")}}
 }
 

@@ -136,14 +136,18 @@ pub fn remove(ctx: &SetupCtx, agents: &[String]) -> Result<()> {
                 let current = std::str::from_utf8(bytes)?;
                 let spec = crate::agents::find(&entry.agent).ok_or("text adapter no longer available")?;
                 let plan = (spec.plan)(ctx)?;
-                let revert = plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).find_map(|e| match e { Edit::Text { file,id, revert, .. } if id == &entry.id && file==&entry.file => Some(revert), _ => None }).ok_or("missing text revert")?;
+                // Revert callbacks are pure over file content, so match by id; the file only disambiguates when several
+                // edits share an id (e.g. one per shell profile). This also survives a relocated config dir.
+                let reverts: Vec<_> = plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).filter_map(|e| match e { Edit::Text { file,id, revert, .. } if id == &entry.id => Some((file,revert)), _ => None }).collect();
+                let revert = reverts.iter().find(|(file,_)| *file==&entry.file).or(if reverts.len()==1 {reverts.first()} else {None}).map(|(_,r)| *r).ok_or("missing text revert")?;
                 let reverted = revert(current)?;
                 staged.after = if !entry.existed && reverted.is_empty() { None } else { Some(reverted.into_bytes()) };
             }
             Change::TextArg {arg} => {
                 let current=std::str::from_utf8(bytes)?;
                 let spec=crate::agents::find(&entry.agent).ok_or("text adapter no longer available")?;let plan=(spec.plan)(ctx)?;
-                let revert=plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).find_map(|e|match e {Edit::TextArg {file,id,revert,..} if id==&entry.id&&file==&entry.file=>Some(revert),_=>None}).ok_or("missing text-arg revert")?;
+                let reverts:Vec<_>=plan.edits.iter().chain(plan.offers.iter().flat_map(|o|o.edits.iter())).filter_map(|e|match e {Edit::TextArg {file,id,revert,..} if id==&entry.id=>Some((file,revert)),_=>None}).collect();
+                let revert=reverts.iter().find(|(file,_)|*file==&entry.file).or(if reverts.len()==1 {reverts.first()} else {None}).map(|(_,r)|*r).ok_or("missing text-arg revert")?;
                 let reverted=revert(current,arg)?;
                 staged.after=if !entry.existed&&reverted.is_empty() {None} else {Some(reverted.into_bytes())};
             }

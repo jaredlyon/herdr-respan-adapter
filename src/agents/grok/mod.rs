@@ -158,8 +158,7 @@ fn normalize(v: &Value, state: &mut State, now: u64, proxy: bool) -> Result<Batc
                     }
                 }
             }
-            "stop" | "stop_failure" | "stop_cancelled" | "session_end" => {
-                if !state.closed && state.turn.is_some() {
+            "stop" | "stop_failure" | "stop_cancelled" | "session_end" if !state.closed && state.turn.is_some() => {
                     let failed = matches!(event, "stop_failure" | "stop_cancelled")
                         || (event == "session_end" && matches!(text(v, "reason"), Some("error" | "abort" | "timeout" | "cancelled")));
                     events.push(Event::TurnEnd { turn_id: turn, ts_ns: now,
@@ -169,7 +168,6 @@ fn normalize(v: &Value, state: &mut State, now: u64, proxy: bool) -> Result<Batc
                     state.final_output = v.get("lastAssistantMessage").cloned();
                     state.closed = true;
                     state.settle_left = if state.transcript.is_some() && !proxy { 3 } else { 0 };
-                }
             }
             _ => {}
         }
@@ -221,17 +219,17 @@ fn bind_spawn(v: &Value, tool: &str, state: &mut State) {
 fn baseline(state: &mut State) -> Result<()> {
     if let Some(path) = &state.transcript {
         match jsonl::read_new(path, &mut state.cursor) {
-            Ok(_) => {}, Err(e) if missing(&e) => {}, Err(e) => return Err(e),
+            Ok(_) => {}, Err(e) if missing(e.as_ref()) => {}, Err(e) => return Err(e),
         }
     }
     Ok(())
 }
-fn missing(e: &Box<dyn std::error::Error + Send + Sync>) -> bool { e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
+fn missing(e: &(dyn std::error::Error + Send + Sync)) -> bool { e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) }
 
 fn transcript(state: &mut State, now: u64, proxy: bool, events: &mut Vec<Event>) -> Result<()> {
     let (Some(path), Some(turn)) = (&state.transcript, &state.turn) else { return Ok(()); };
     let lines = match jsonl::read_new(path, &mut state.cursor) {
-        Ok(lines) => lines, Err(e) if missing(&e) => return Ok(()), Err(e) => return Err(e),
+        Ok(lines) => lines, Err(e) if missing(e.as_ref()) => return Ok(()), Err(e) => return Err(e),
     };
     let mut offset = state.cursor.offset.saturating_sub(lines.iter().map(|line| line.len() as u64 + 1).sum::<u64>());
     for line in lines {

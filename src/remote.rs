@@ -22,7 +22,7 @@ fn decode(text: &str) -> Result<Vec<u8>> {
     let bytes: Vec<_> = text.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
     if bytes.is_empty() || bytes.len() % 4 != 0 { return Err("invalid config blob".into()); }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (index, chunk) in bytes.chunks_exact(4).enumerate() {
+    for (index, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
         let padding = chunk.iter().rev().take_while(|&&b| b == b'=').count();
         if padding > 2 || (padding > 0 && index + 1 != bytes.len() / 4) { return Err("invalid config blob".into()); }
         let mut n = 0u32;

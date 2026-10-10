@@ -138,7 +138,7 @@ fn jsonc_fails_safely_with_exact_manual_entries() {
     let tmp = crate::tests::Temp::new(); let ctx = setup_context(&tmp);
     let path = ctx.project.as_ref().unwrap().join(".github/copilot/settings.local.json"); std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let original = "{ // existing comment\n \"theme\": \"dark\",\n}";
-    std::fs::write(&path, &original).unwrap();
+    std::fs::write(&path, original).unwrap();
     let error = setup::plan(&ctx).err().unwrap().to_string();
     assert!(error.contains("No files changed")); assert!(error.contains("HERDR_RESPAN_COPILOT_EVENT")); assert!(error.contains("postToolUseFailure")); assert!(error.contains("timeoutSec"));
     assert_eq!(std::fs::read_to_string(path).unwrap(), original);

@@ -1,0 +1,30 @@
+# Hermes observer adapter
+
+Setup installs `<HERMES_HOME>/plugins/herdr-respan/{plugin.yaml,__init__.py}` and adds the scalar `herdr-respan` to `config.yaml` → `plugins.enabled`. No credentials, provider configuration or Hermes integrations are replaced. Resolution follows herdr: `HERMES_HOME` (including `~/`), otherwise `~/.hermes`; on Windows an explicit differing `HOME` takes precedence, otherwise `%LOCALAPPDATA%/hermes`. The Core-owned binary/state/config paths are embedded as escaped Python literals. Removal deletes only owned assets and our enablement entry.
+
+The YAML `Edit::Text` line editor preserves unrelated comments, inline list-key comments, list order, CRLF and trailing-newline presence. Block mappings with two-space `enabled` indentation and scalar block/flow lists are supported. Flow mappings, aliases, legacy flat `plugins` lists and malformed shapes fail rather than being rewritten. `plugins.disabled` wins in Hermes: setup warns about a pre-existing disabled `herdr-respan` entry instead of changing that user choice. An already enabled entry remains unowned.
+
+The Python plugin registers only the consumed observer callbacks, returning `None` even on internal errors. Every callback requires `HERDR_ENV=1`, `HERDR_RESPAN!=off`, and `hermes.observer.v1`. Parent turns are admitted only for `cli`, `tui`, `desktop`, or `acp`; Discord/gateway/other messaging platforms are excluded. Tool hooks omit `platform`, so admission follows the native session/turn. Child `platform=subagent` is accepted only after an admitted parent's `subagent_start` establishes the child link.
+
+A lock protects the per-turn memory buffer. `post_llm_call` supplies output; the authoritative `on_session_end` supplies success/interruption/failure and triggers exactly one binary invocation for the turn. A completed parent with live children waits for their stops; sparse shutdown/finalize/reset closes incomplete child lifetimes with error status. Child requests/tools are remapped into the parent turn with their enclosing subagent id. A unique active `delegate_task` hook supplies the spawning tool parent; if native callbacks leave multiple candidate spawning tools, the subagent is honestly parented to the turn instead of guessing.
+
+Handoff serialization, `Popen`, stdin backpressure and process reaping run on a daemon thread outside the buffer lock. The child receives one bridge batch on stdin, with null stdout/stderr, `CREATE_NO_WINDOW` on Windows and a new session on POSIX. Rust alone assigns span keys, applies toggles/redaction/caps, persists and exports. Native chat spans are omitted under `HERDR_RESPAN_PROXY=1` or a Respan base URL.
+
+## Coverage and limits
+
+- Turn spans, per-provider-attempt chat spans (including errors/retries), tool spans and child agent spans.
+- Per-request token usage: Hermes `prompt_tokens` becomes total bridge `input_tokens`; uncached/cache-read/cache-write buckets are summed when total is absent. Unknown usage remains null. Cache read/write and reasoning are retained; observer payloads do not expose agent-reported cost.
+- Auxiliary calls emit chat spans tagged `hermes.aux_task`, controlled by Core `aux_spans`. The inspected **0.18.0** tower has no auxiliary emitters; registering those hook names is harmless but may produce Hermes' unknown-hook warning. The inspected **0.21.5** Spark has auxiliary emitters. This is a capability difference, not a claim that 0.18.0 emits auxiliary spans.
+- Streaming auxiliary observers fire before consumption and lack final content/tokens: those fields remain unknown. Hermes itself sanitizes/bounds native request/response payloads before the plugin sees them; explicit truncation markers are retained. Raw tool results receive Core redaction.
+- Pending turns are memory-only until handoff. Abrupt process termination can lose the buffer or daemon handoff. This is not a durable Python spool and does not make a measured callback-latency claim. Minimum native schema verified: Hermes 0.18.0; Python standard library only (3.11+).
+
+## Checks and fixture provenance
+
+`python3 -m unittest discover -s src/agents/hermes -p test_plugin.py` drives registered hooks with synthetic kwargs, compares the exact batch to `fixtures/batch.json`, checks platform/schema gates, platform-less concurrent child tools, absent auxiliary emitters, sparse shutdown, unknown usage, proxy suppression, sanitized request variants, and background/Windows handoff options. `python3 -m py_compile src/agents/hermes/assets/herdr-respan/__init__.py` checks asset syntax; setup substitutes the three placeholder identifiers before import. `cargo test agents::hermes` checks the same batch through the actual shared bridge, resulting span tree, foreign payload rejection and comment-preserving config edits. Tests touch disposable directories only. No real Hermes sessions/provider calls are used.
+
+`fixtures/hooks.json` and `fixtures/batch.json` are synthetic, not captured live. Schema provenance:
+
+- `NousResearch/hermes-agent@b3bc302370aadeb792ceb0a899cf6a575ed130bb`: `agent/conversation_loop.py:1129-1155,4110-4139` (main request hooks), `run_agent.py:2209-2223,2378-2473` (canonical usage, sanitized bodies and errors), `agent/turn_context.py:433-446`, `agent/turn_finalizer.py:361-379,489-504` (turn boundaries), `hermes_cli/plugins.py:2049-2086`, `model_tools.py:861-903` (tool hooks), `tools/delegate_tool.py:1382-1397,2718-2729` (children).
+- `NousResearch/hermes-agent@f42f579cf8bac4918ac9599bece71618afadd846`: `agent/auxiliary_hooks.py:24-41,89-181` (auxiliary hooks; top-level usage takes precedence over the inspected nested response usage defect).
+- Comment-aware line-edit approach: [herdr's config editor](https://github.com/herdrdev/herdr/blob/2563803d/src/integration/config_edit.rs), especially `ensure_hermes_plugin_enabled`/removal; our implementation deliberately refuses unsupported legacy forms instead of treating them as current enablement.
+- Observer schema: https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks (installed-version evidence takes precedence over current docs).

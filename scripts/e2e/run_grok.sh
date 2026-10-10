@@ -83,17 +83,18 @@ assert json.loads((r/'received.before.json').read_text())=={p.name:p.read_text()
 print('Outside-herdr gate: no new OTLP delivered')
 PY
 # Qualify explicit wrapper routing separately from the native custom-model recipe.
-# Grok has no invocation-only per-model base_url override: use the built-in model
-# with dummy-key/backend overrides, whose endpoint honors the wrapper globals.
+# Grok has no invocation-only per-model base_url override. Omitting that field
+# makes the custom primary model inherit the wrapper global endpoint; title
+# generation still uses the built-in Responses model.
 python3 - "$HRA_ROOT" "$HRA_PROVIDER_URL" <<'PY'
 import pathlib,sys
 r=pathlib.Path(sys.argv[1]); base=sys.argv[2]
-(r/'grok/config.toml').write_text('[models]\ndefault = "grok-4.6"\n[model."grok-4.6"]\napi_key = "dummy"\napi_backend = "chat_completions"\n')
+(r/'grok/config.toml').write_text('[models]\ndefault = "mock"\n[model.mock]\nmodel = "mock-model"\napi_key = "dummy"\napi_backend = "chat_completions"\ncontext_window = 128000\n')
 with (r/'config/config.toml').open('a') as f:
     f.write(f'\n[proxy]\nidle_exit_secs = 60\n[proxy.upstream]\nopenai = "{base}/v1"\nanthropic = "{base}"\ngemini = "{base}"\n')
 (r/'proxy.request-offset').write_text(str(len((r/'provider.jsonl').read_text().splitlines())))
 PY
-proxy_command="python3 '$HRA_ROOT/launch.py' '$HRA_BIN' run grok --state-dir '$HRA_ROOT/state' --config-dir '$HRA_ROOT/config' -- --disable-web-search --always-approve --no-subagents --tools run_terminal_command -m grok-4.6 -p"
+proxy_command="python3 '$HRA_ROOT/launch.py' '$HRA_BIN' run grok --state-dir '$HRA_ROOT/state' --config-dir '$HRA_ROOT/config' -- --disable-web-search --always-approve --no-subagents --tools run_terminal_command -m mock -p"
 hra_prompt "$proxy_command 'Say the deterministic mock text.'" proxy-text
 hra_prompt "$proxy_command 'RUN_TOOL: execute echo hra-e2e then reply.'" proxy-tool
 hra_flush

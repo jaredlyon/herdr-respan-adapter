@@ -1,0 +1,4 @@
+{"type":"user","content":[{"type":"text","text":"Inspect the synthetic fixture"}],"prompt_index":0}
+{"type":"assistant","content":"Delegating","tool_calls":[{"id":"spawn-1","name":"spawn_subagent","arguments":"{\"subagent_type\":\"explore\"}"}],"model_id":"grok-build"}
+{"type":"tool_result","tool_call_id":"spawn-1","content":"Complete"}
+{"type":"assistant","content":"Finished","model_id":"grok-build"}

@@ -1,0 +1,64 @@
+{
+  "v": 1,
+  "agent": "grok",
+  "session_id": "synthetic-session",
+  "session_path": null,
+  "cwd": "/synthetic/repo",
+  "agent_version": null,
+  "events": [
+    {
+      "type": "tool",
+      "turn_id": "prompt-1",
+      "id": "spawn-1",
+      "parent_id": null,
+      "name": "spawn_subagent",
+      "start_ns": 2,
+      "end_ns": 6,
+      "input": {
+        "value": {
+          "description": "Inspect",
+          "prompt": "Summarize",
+          "subagent_type": "explore"
+        },
+        "truncated": false
+      },
+      "output": {
+        "value": {
+          "output": {
+            "type": "SubagentCompleted",
+            "subagent_id": "child-1",
+            "subagent_type": "explore",
+            "output": "Complete",
+            "tool_calls": 1,
+            "turns": 1,
+            "duration_ms": 3,
+            "resume_from_hint": "child-1"
+          },
+          "prompt_text": "Complete",
+          "effective_tool_name": null
+        },
+        "truncated": false
+      },
+      "status": "ok",
+      "error": null,
+      "metadata": {}
+    },
+    {
+      "type": "subagent_start",
+      "turn_id": "prompt-1",
+      "id": "child-1",
+      "parent_id": "spawn-1",
+      "ts_ns": 3,
+      "name": "explore",
+      "metadata": {}
+    },
+    {
+      "type": "subagent_end",
+      "turn_id": "prompt-1",
+      "id": "child-1",
+      "ts_ns": 5,
+      "status": "ok",
+      "output": "Complete"
+    }
+  ]
+}

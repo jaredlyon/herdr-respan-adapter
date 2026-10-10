@@ -142,7 +142,11 @@ impl Stream {
                                 let failed = matches!(item["status"].as_str(), Some("failed" | "declined"));
                                 let end = p["completed_at_ms"].as_u64().filter(|n| *n > 0).and_then(|n| n.checked_mul(1_000_000)).unwrap_or(ts);
                                 let start = p["started_at_ms"].as_u64().filter(|n| *n > 0).and_then(|n| n.checked_mul(1_000_000)).unwrap_or(end).min(end);
-                                events.push(Event::Tool { metadata: BTreeMap::new(), turn_id: turn, id, parent_id: parent, name: text(item, "tool").or_else(|| Some(kind.into())), start_ns: start, end_ns: end, input: item.get("arguments").or_else(|| item.get("command")).or_else(|| item.get("changes")).cloned(), output: item.get("aggregated_output").or_else(|| item.get("result")).or_else(|| item.get("content")).cloned(), status: Some(if failed { "error" } else { "ok" }.into()), error: text(item, "error") });
+                                // Code-mode: the model's `exec` custom tool runs a script whose inner tool calls arrive as items
+                                // while that call is still open. Nest under it when exactly one is open; never guess between several.
+                                let mut open = self.tools.iter().filter(|(_, t)| t.turn == turn && t.name == "exec").map(|(id, _)| id.clone());
+                                let metadata = match (open.next(), open.next()) { (Some(parent), None) => BTreeMap::from([("parent_tool_id".into(), json!(parent))]), _ => BTreeMap::new() };
+                                events.push(Event::Tool { metadata, turn_id: turn, id, parent_id: parent, name: text(item, "tool").or_else(|| Some(kind.into())), start_ns: start, end_ns: end, input: item.get("arguments").or_else(|| item.get("command")).or_else(|| item.get("changes")).cloned(), output: item.get("aggregated_output").or_else(|| item.get("result")).or_else(|| item.get("content")).cloned(), status: Some(if failed { "error" } else { "ok" }.into()), error: text(item, "error") });
                             }
                         } else if kind == "AgentMessage" { self.output.push(json!({"role":"assistant","content":item["content"]})); }
                     }

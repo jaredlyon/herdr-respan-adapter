@@ -116,6 +116,27 @@ fn model_context_is_turn_specific() {
     assert!(events.iter().any(|e| matches!(e, Event::Chat { id, model, .. } if id == "late-old" && model.as_deref() == Some("old-model"))));
     assert!(events.iter().any(|e| matches!(e, Event::Chat { id, model, usage:Some(usage), start_ns, .. } if id == "unknown-model" && model.is_none() && usage.input_tokens.is_none() && *start_ns == 10)));
 }
+// Shapes from a live codex-cli 0.162.1 / gpt-6-luna rollout (2026-10-10): the model's code-mode `exec` call runs a
+// script whose shell command arrives as an item before the exec output.
+#[test]
+fn code_mode_inner_command_nests_under_exec_call() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = ctx(&tmp); let mut stream = Stream::default();
+    let lines: Vec<String> = [
+        json!({"type":"session_meta","payload":{"id":"root"}}),
+        json!({"timestamp":"2026-10-10T21:06:04.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}),
+        json!({"timestamp":"2026-10-10T21:06:06.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"call_x","input":"tools.exec_command({cmd:\"echo hra-e2e\"})"}}),
+        json!({"timestamp":"2026-10-10T21:06:07.256Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"t1","item":{"type":"CommandExecution","id":"exec-1","command":["/bin/bash","-lc","echo hra-e2e"],"aggregated_output":"hra-e2e\n","status":"completed"}}}),
+        json!({"timestamp":"2026-10-10T21:06:07.287Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_x","output":"Script completed"}}),
+        json!({"timestamp":"2026-10-10T21:06:08.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}),
+    ].iter().map(Value::to_string).collect();
+    let events = stream.parse(&lines, None, 0);
+    bridge::ingest(&mut ctx, Batch { v: 1, agent: "codex".into(), session_id: "root".into(), session_path: None, cwd: None, agent_version: None, events }).unwrap();
+    let spans = records(&tmp);
+    let tool = |id: &str| spans.iter().find(|s| s.metadata.get("tool_call_id") == Some(&json!(id))).unwrap();
+    assert_eq!(tool("call_x").parent_key.as_deref(), Some("codex:root:t1:turn"));
+    assert_eq!(tool("exec-1").parent_key.as_deref(), Some(tool("call_x").span_key.as_str()));
+    assert!(!tool("exec-1").metadata.contains_key("parent_tool_id") && !tool("exec-1").metadata.contains_key("subagent"));
+}
 
 #[test]
 fn settle_preserves_proxy_and_pane_context() {

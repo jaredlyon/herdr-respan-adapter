@@ -97,8 +97,10 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
                     if let Some(cost)=cost_usd {rec.metadata.insert("estimated_cost_usd".into(),json!(cost));}
                     if let Some(aux)=aux_task {rec.metadata.insert("hermes.aux_task".into(),json!(aux));}rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
-                Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,metadata,..}=>{
+                Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,mut metadata,..}=>{
                     infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{id}"),parent_id.as_deref(),start_ns,end_ns);
+                    // `parent_tool_id` metadata nests a tool under the tool that ran it (e.g. Codex code-mode `exec` scripts).
+                    if let Some(Value::String(tool)) = metadata.remove("parent_tool_id") { rec.parent_key=Some(format!("{trace}:tool:{tool}")); }
                     rec.name=name.unwrap_or_else(||"tool".into());rec.log_type="tool".into();rec.input=input;rec.output=output;rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;rec.metadata.insert("tool_call_id".into(),json!(id));rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
                 Event::SubagentStart {id,parent_id,ts_ns,name,metadata,..}=>{infer_time(turn,ts_ns,ts_ns);let sub=turn.subs.entry(id).or_default();sub.start=Some(ts_ns);sub.parent_id=parent_id;sub.name=name;sub.metadata=metadata;},

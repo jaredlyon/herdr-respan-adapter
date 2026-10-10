@@ -1,0 +1,25 @@
+[package]
+name = "herdr-respan-adapter"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "herdr-respan"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+toml = "0.8"
+toml_edit = { version = "0.22", features = ["serde"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }
+sha2 = "0.10"
+getrandom = "0.2"
+regex = "1"
+similar = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "unwind"

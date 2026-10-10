@@ -1,4 +1,6 @@
 //! Gemini's chunk hooks are observations, not completed model responses.
+//! Each ingress gets a persisted queue id: only delivery replay is deduplicated.
+//! Superseding a turn closes its outstanding tools under that turn as errors.
 mod setup;
 #[cfg(test)] mod tests;
 
@@ -66,7 +68,7 @@ struct Queued {
 fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
     let mut payload: Value = serde_json::from_slice(bytes)?;
     if !identity(&payload) { return Ok(()); }
-    let event_id = digest(&serde_json::to_vec(&payload)?);
+    let event_id = crate::record::random_id()?;
     let tool_fingerprint = digest(&serde_json::to_vec(&payload["tool_input"])?);
     for field in ["prompt", "prompt_response", "tool_input", "tool_response"] {
         if let Some(value)=payload.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); }
@@ -76,7 +78,7 @@ fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
         for field in ["text", "candidates"] { if let Some(value)=response.get_mut(field) { let mut content=Some(value.take());ctx.scrub_content(&mut content)?;*value=content.unwrap_or(Value::Null); } }
     }
     let queued=Queued {payload,event_id,tool_fingerprint,now:ctx.now_ns(),metadata:ctx.metadata.clone(),run_id:ctx.run_id.clone(),proxy_active:ctx.proxy_active};
-    ctx.save(&format!("queue-{}-{}.json",ctx.now_ns(),crate::record::random_id()?),&queued)?;
+    ctx.save(&format!("queue-{}-{}.json",queued.now,queued.event_id),&queued)?;
     ctx.mark_settle_pending()?;
     let Some(_lock)=ctx.try_lock("gemini-native")? else {return Ok(());};
     drain_queue(ctx)
@@ -188,6 +190,11 @@ fn close_request(state: &mut State, payload: &Value, now: u64, events: &mut Vec<
     events.push(Event::Chat { turn_id: state.turn.clone().expect("request has turn"), id: request.id, parent_id: None, start_ns: request.start, end_ns: request.end.max(now), model: request.model, provider: Some("google".into()), input: request.input, output, usage: Some(request.usage), cost_usd: None, aux_task: None, status: Some(if interrupted { "error" } else { "ok" }.into()), error: interrupted.then(|| "model response not observed".into()), metadata: Default::default() });
     Ok(())
 }
+fn close_tools(state: &mut State, turn_id: &str, now: u64, events: &mut Vec<Event>) {
+    for tool in state.tools.drain(..) {
+        events.push(Event::Tool { turn_id: turn_id.into(), id: tool.id, parent_id: None, name: Some(tool.name), start_ns: tool.start, end_ns: now, input: tool.input, output: None, status: Some("error".into()), error: Some("tool response not observed".into()), metadata: Default::default() });
+    }
+}
 fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events: &mut Vec<Event>) -> Result<()> {
     let event = text(payload, "hook_event_name").expect("validated event");
     if matches!(event, "BeforeAgent" | "BeforeModel" | "BeforeTool" | "AfterAgent" | "SessionEnd") {
@@ -197,6 +204,7 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
         "SessionStart" => { let _ = transcript(state, text(payload, "transcript_path").unwrap())?; }
         "BeforeAgent" => {
             if let Some(turn_id) = state.turn.take() {
+                close_tools(state, &turn_id, now, events);
                 events.push(Event::TurnEnd { turn_id, ts_ns: now, output: None, status: Some("error".into()), error: Some("agent turn superseded".into()) });
             }
             let turn_id = format!("turn-{}", text(payload, "timestamp").unwrap());
@@ -242,9 +250,7 @@ fn translate(ctx: &HookCtx, state: &mut State, payload: &Value, now: u64, events
         }
         "AfterAgent" | "SessionEnd" => {
             if let Some(turn_id) = state.turn.take() {
-                for tool in state.tools.drain(..) {
-                    events.push(Event::Tool { turn_id: turn_id.clone(), id: tool.id, parent_id: None, name: Some(tool.name), start_ns: tool.start, end_ns: now, input: tool.input, output: None, status: Some("error".into()), error: Some("tool response not observed".into()), metadata: Default::default() });
-                }
+                close_tools(state, &turn_id, now, events);
                 let mut output = payload.get("prompt_response").cloned(); ctx.scrub_content(&mut output)?;
                 events.push(Event::TurnEnd { turn_id, ts_ns: now, output, status: Some(if event == "SessionEnd" { "error" } else { "ok" }.into()), error: (event == "SessionEnd").then(|| "session ended during agent turn".into()) });
             }

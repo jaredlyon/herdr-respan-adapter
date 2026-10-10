@@ -17,7 +17,7 @@ pub fn detected(kind: &str, home: &Path) -> bool {
         "copilot" => ("copilot", "COPILOT_HOME", ".copilot"), "kimi" => ("kimi", "KIMI_CODE_HOME", ".kimi-code"),
         "qwen" => ("qwen", "QWEN_HOME", ".qwen"), "grok" => ("grok", "GROK_HOME", ".grok"), _ => return false,
     };
-    let override_dir = std::env::var_os(env).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let override_dir = std::env::var_os(env).filter(|v| !v.is_empty()).map(|v| super::expand_home(home, Path::new(&v)));
     let dir = match (kind, override_dir) {
         ("gemini", Some(root)) => root.join(".gemini"),
         (_, Some(dir)) => dir,
@@ -27,4 +27,25 @@ pub fn detected(kind: &str, home: &Path) -> bool {
         (_, None) => home.join(relative),
     };
     executable(bin) || (kind == "cursor" && executable("cursor-agent")) || dir.is_dir()
+}
+
+#[cfg(test)] mod tests {
+    use super::*;
+    #[test] fn detects_tilde_relocations() {
+        if let Some(home) = std::env::var_os("HERDR_RESPAN_DETECT_TEST_HOME") {
+            for kind in ["claude", "hermes", "pi"] { assert!(detected(kind, Path::new(&home)), "{kind}"); }
+            return;
+        }
+        let tmp = crate::tests::Temp::new();
+        let home = tmp.path.join("home");
+        std::fs::create_dir_all(home.join("relocated")).unwrap();
+        for value in ["~", "~/relocated"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "setup::detect::tests::detects_tilde_relocations"])
+                .env_clear().env("PATH", "").env("HERDR_RESPAN_DETECT_TEST_HOME", &home)
+                .env("CLAUDE_CONFIG_DIR", value).env("HERMES_HOME", value).env("PI_CODING_AGENT_DIR", value)
+                .status().unwrap();
+            assert!(status.success(), "{value}");
+        }
+    }
 }

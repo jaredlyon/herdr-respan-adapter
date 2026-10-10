@@ -1,18 +1,25 @@
 use crate::{paths::Paths, record::{now_ns, SpanRecord}, Result};
 use std::{fs::{self, File, OpenOptions}, io::{Read, Seek, SeekFrom, Write}, path::{Path, PathBuf}, process::{Command, Stdio}, time::Duration};
 
-pub struct Writer { state: PathBuf, path: PathBuf, file: Option<File>, max_bytes: u64, complete_bytes: u64 }
+pub struct Writer { state: PathBuf, path: PathBuf, file: Option<File>, max_bytes: u64, complete_bytes: u64, staged: bool }
 impl Writer {
     pub fn new(state: &Path, max_bytes: u64) -> Result<Self> {
         let dir = state.join("spool"); fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{}-{}.jsonl", std::process::id(), now_ns()));
+        Self::open(state, max_bytes, path, false)
+    }
+    pub(crate) fn staged(state: &Path, max_bytes: u64, name: &str) -> Result<Self> {
+        let dir=state.join("spool"); fs::create_dir_all(&dir)?;
+        Self::open(state, max_bytes, dir.join(format!("{name}.jsonl")), true)
+    }
+    fn open(state: &Path, max_bytes: u64, path: PathBuf, staged: bool) -> Result<Self> {
         let mut options = OpenOptions::new(); options.create_new(true).read(true).write(true);
         // Windows append-only access excludes FILE_WRITE_DATA, which set_len needs
         // for rollback/close. The lifetime OS lock makes seek-to-end appends exclusive.
         #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
         let file = options.open(&path)?;
         file.try_lock()?;
-        Ok(Self { file: Some(file), path, state: state.into(), max_bytes, complete_bytes: 0 })
+        Ok(Self { file: Some(file), path, state: state.into(), max_bytes, complete_bytes: 0, staged })
     }
     pub fn append(&mut self, rec: &SpanRecord) -> Result<()> {
         let mut bytes = serde_json::to_vec(rec)?; bytes.push(b'\n');
@@ -34,13 +41,34 @@ impl Writer {
         if let Some(file) = self.file.take() {
             file.set_len(self.complete_bytes)?;
             file.sync_data()?; drop(file);
-            fs::rename(&self.path, self.path.with_extension("ready"))?;
-            enforce_cap(&self.state, self.max_bytes)?;
+            if self.staged && self.complete_bytes==0 {fs::remove_file(&self.path)?;return Ok(());}
+            if !self.staged {
+                fs::rename(&self.path, self.path.with_extension("ready"))?;
+                enforce_cap(&self.state, self.max_bytes)?;
+            }
         }
         Ok(())
     }
 }
 impl Drop for Writer { fn drop(&mut self) { if self.close().is_err() { crate::log::error(&self.state, "spool close failed"); } } }
+/// A bridge journal owns staged records; ordinary dead-writer recovery ignores them.
+/// Replaying publication after sender acknowledgement must never recreate a ready file.
+pub(crate) fn publish_staged(state: &Path, name: &str, max_bytes: u64) -> Result<()> {
+    let path=state.join("spool").join(format!("{name}.jsonl"));
+    match fs::rename(&path, path.with_extension("ready")) {
+        Ok(()) => enforce_cap(state, max_bytes),
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+pub(crate) fn discard_staged(state: &Path, prefix: &str) -> Result<()> {
+    for path in spool_paths(state)? {
+        if path.extension().is_some_and(|e| e=="jsonl") && path.file_stem().is_some_and(|s| s.to_string_lossy().starts_with(prefix)) {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
 fn spool_paths(state: &Path) -> Result<Vec<PathBuf>> {
     match fs::read_dir(state.join("spool")) {
         Ok(entries) => Ok(entries.filter_map(|e| e.ok().map(|e| e.path())).collect()),
@@ -198,7 +226,7 @@ fn coordination_path(path: &Path) -> PathBuf {
 }
 fn stale(path: &Path, stale_after: Duration) -> Result<bool> {
     match path.metadata() {
-        Ok(m) => Ok(m.modified()?.elapsed().unwrap_or_default() > stale_after),
+        Ok(m) => Ok(m.modified()?.elapsed().map_or(true, |age| age > stale_after)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
         Err(e) if lock_unavailable(&e) => Ok(false), Err(e) => Err(e.into()),
     }
@@ -309,6 +337,15 @@ fn detached(cmd: &mut Command) {
         let tmp = crate::tests::Temp::new(); let path = orphan(&tmp.path);
         let lock = Lock::acquire(&tmp.path).unwrap().unwrap(); assert!(path.exists());
         assert!(Lock::acquire(&tmp.path).unwrap().is_none()); drop(lock); assert!(!path.exists());
+    }
+    #[test] fn future_orphan_is_reclaimed_but_live_owner_is_not() {
+        let tmp=crate::tests::Temp::new();let path=orphan(&tmp.path);
+        let future=std::time::SystemTime::now()+Duration::from_secs(86400);
+        OpenOptions::new().write(true).open(&path).unwrap().set_times(std::fs::FileTimes::new().set_modified(future)).unwrap();
+        let held=Lock::acquire(&tmp.path).unwrap().unwrap();
+        OpenOptions::new().write(true).open(&path).unwrap().set_times(std::fs::FileTimes::new().set_modified(future)).unwrap();
+        assert!(Lock::acquire(&tmp.path).unwrap().is_none());drop(held);
+        assert!(Lock::acquire(&tmp.path).unwrap().is_some());
     }
     #[test] fn live_os_owner_outranks_backdated_mtime() {
         let tmp = crate::tests::Temp::new(); let first = Lock::acquire(&tmp.path).unwrap().unwrap(); let path = tmp.path.join("spool/flush.lock"); age(&path);

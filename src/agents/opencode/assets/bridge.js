@@ -53,13 +53,17 @@ export function collector({ owns, cwd, send = deliver }) {
   }
   function start(sessionID, id, timestamp, prompt) {
     const child = children.get(sessionID);
-    if (child) return turn(sessionID);
+    if (child) {
+      const value = turn(sessionID);
+      if (id) value?.roles.set(`${sessionID}:${id}`, "user");
+      return value;
+    }
     if (!owns(sessionID) || !id || completed.has(`${sessionID}:${id}`)) return;
     const key = `${sessionID}:${id}`;
     let value = turns.get(key);
     if (value?.id === id) { if (prompt != null) value.prompt = prompt; return value; }
     value = { id, sessionID, start: ns(timestamp), prompt: prompt ?? null,
-      messages: new Map(), tools: new Map(), subs: new Map(), error: null };
+      roles: new Map([[key, "user"]]), messages: new Map(), tools: new Map(), subs: new Map(), error: null };
     turns.set(key, value);
     active.set(sessionID, key);
     return value;
@@ -160,6 +164,7 @@ export function collector({ owns, cwd, send = deliver }) {
       const value = turn(id, info.parentID);
       const m = message(value, id, info.id, info.time?.created);
       if (!m) return;
+      value.roles.set(`${id}:${info.id}`, "assistant");
       Object.assign(m, { start: ns(info.time?.created), model: info.modelID ?? null, provider: info.providerID ?? null,
         error: errorText(info.error), usage: usage(info.tokens), cost: info.cost });
       if (m.error && id === value.sessionID) value.error = m.error;
@@ -168,10 +173,13 @@ export function collector({ owns, cwd, send = deliver }) {
       const p = d.part;
       const value = turn(id, p?.messageID);
       if (!value || !p) return;
-      if (p.messageID === value.id && p.type === "text") {
-        value.promptParts ??= new Map(); value.promptParts.set(p.id, p);
-        value.prompt = text(value.promptParts);
-      } else if (p.type === "text" || p.type === "reasoning") {
+      const role = value.roles.get(`${id}:${p.messageID}`);
+      if (role === "user") {
+        if (id === value.sessionID && p.messageID === value.id && p.type === "text") {
+          value.promptParts ??= new Map(); value.promptParts.set(p.id, p);
+          value.prompt = text(value.promptParts);
+        }
+      } else if (role === "assistant" && (p.type === "text" || p.type === "reasoning")) {
         message(value, id, p.messageID, p.time?.start)?.parts.set(p.id, p);
       } else if (p.type === "tool") {
         const t = tool(value, id, p.callID, p.state?.time?.start);

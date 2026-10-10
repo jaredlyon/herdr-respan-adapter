@@ -15,6 +15,8 @@ pub(super) struct Stream {
     start: u64,
     input: Vec<Value>,
     output: Vec<Value>,
+    #[serde(default)]
+    output_ids: BTreeMap<String, Option<usize>>,
     modern: BTreeSet<String>,
     legacy: BTreeMap<String, Vec<(String, Usage, u64)>>,
     last_total: u64,
@@ -36,9 +38,23 @@ fn content(items: &mut Vec<Value>) -> Option<Value> {
 }
 impl Stream {
     pub fn scrub_content(&mut self, ctx: &crate::record::HookCtx) -> crate::Result<()> {
-        if ctx.config.content_cap_bytes == 0 { self.input.clear();self.output.clear(); }
+        if ctx.config.content_cap_bytes == 0 { self.input.clear();self.take_output(); }
         for tool in self.tools.values_mut() { ctx.scrub_content(&mut tool.input)?; }
         Ok(())
+    }
+    fn assistant_output(&mut self,item:&Value,canonical:bool) {
+        if let Some(id)=text(item,"id") {
+            if let Some(index)=self.output_ids.get(&id) {
+                if canonical {if let Some(value_at)=index.and_then(|i|self.output.get_mut(i)) {*value_at=json!({"role":"assistant","content":item["content"]});}}
+                return;
+            }
+            self.output_ids.insert(id,Some(self.output.len()));
+        }
+        self.output.push(json!({"role":"assistant","content":item["content"]}));
+    }
+    fn take_output(&mut self)->Option<Value> {
+        for index in self.output_ids.values_mut() {*index=None;}
+        content(&mut self.output)
     }
     pub fn spawn_parent(&self, child: &str) -> Option<String> {
         self.spawned.get(child).cloned().or_else(|| self.tools.iter().filter(|(_, t)| t.name == "spawn_agent").max_by_key(|(_, t)| t.start).map(|(id, _)| id.clone()))
@@ -73,15 +89,14 @@ impl Stream {
                 let Some(id) = text(p, "response_id") else { continue; };
                 self.modern.insert(native_turn.clone()); self.legacy.remove(&native_turn);
                 events.push(Event::Chat { metadata: BTreeMap::from([("codex.usage_source".into(), json!("token_usage_record")), ("codex.timing".into(), json!("rollout-boundaries"))]), turn_id: turn, id, parent_id: parent, start_ns: if self.start == 0 { ts } else { self.start.min(ts) }, end_ns: ts,
-                    model: self.models.get(&native_turn).cloned().or_else(|| self.model.clone()), provider: self.provider.clone(), input: content(&mut self.input), output: content(&mut self.output),
+                    model: self.models.get(&native_turn).cloned().or_else(|| self.model.clone()), provider: self.provider.clone(), input: content(&mut self.input), output: self.take_output(),
                     usage: Some(usage(&p["usage"])), cost_usd: None, aux_task: None, status: Some("ok".into()), error: None });
                 self.start = ts;
             } else if kind == "response_item" {
                 match p["type"].as_str().unwrap_or("") {
                     "message" => {
                         let role = p["role"].as_str().unwrap_or("");
-                        let value = json!({"role":role,"content":p["content"]});
-                        if role == "assistant" { self.output.push(value); } else { self.input.push(value); }
+                        if role == "assistant" { self.assistant_output(p,true); } else { self.input.push(json!({"role":role,"content":p["content"]})); }
                     }
                     "function_call" | "custom_tool_call" | "local_shell_call" => {
                         if let Some(id) = text(p, "call_id") {
@@ -112,7 +127,7 @@ impl Stream {
             } else if kind == "event_msg" {
                 match p["type"].as_str().unwrap_or("") {
                     "task_started" | "turn_started" => {
-                        self.input.clear(); self.output.clear();
+                        self.input.clear(); self.output.clear(); self.output_ids.clear();
                         self.turn = native_turn; self.start = ts; self.model = self.models.get(&self.turn).cloned();
                         if child.is_none() { events.push(Event::TurnStart { metadata: BTreeMap::new(), turn_id: turn, ts_ns: ts, prompt: None }); }
                     }
@@ -148,7 +163,7 @@ impl Stream {
                                 let metadata = match (open.next(), open.next()) { (Some(parent), None) => BTreeMap::from([("parent_tool_id".into(), json!(parent))]), _ => BTreeMap::new() };
                                 events.push(Event::Tool { metadata, turn_id: turn, id, parent_id: parent, name: text(item, "tool").or_else(|| Some(kind.into())), start_ns: start, end_ns: end, input: item.get("arguments").or_else(|| item.get("command")).or_else(|| item.get("changes")).cloned(), output: item.get("aggregated_output").or_else(|| item.get("result")).or_else(|| item.get("content")).cloned(), status: Some(if failed { "error" } else { "ok" }.into()), error: text(item, "error") });
                             }
-                        } else if kind == "AgentMessage" { self.output.push(json!({"role":"assistant","content":item["content"]})); }
+                        } else if kind == "AgentMessage" { self.assistant_output(item,false); }
                     }
                     _ => {}
                 }
@@ -160,7 +175,7 @@ impl Stream {
         if self.modern.contains(native) { self.legacy.remove(native); return; }
         for (id, usage, ts) in self.legacy.remove(native).unwrap_or_default() {
             events.push(Event::Chat { metadata: BTreeMap::from([("codex.usage_source".into(), json!("legacy-token-count")), ("codex.timing".into(), json!("rollout-boundaries"))]), turn_id: turn.into(), id, parent_id: parent.map(str::to_owned), start_ns: if self.start == 0 { ts } else { self.start.min(ts) }, end_ns: ts,
-                model: self.models.get(native).cloned().or_else(|| self.model.clone()), provider: self.provider.clone(), input: content(&mut self.input), output: content(&mut self.output), usage: Some(usage), cost_usd: None, aux_task: None, status: Some("ok".into()), error: None });
+                model: self.models.get(native).cloned().or_else(|| self.model.clone()), provider: self.provider.clone(), input: content(&mut self.input), output: self.take_output(), usage: Some(usage), cost_usd: None, aux_task: None, status: Some("ok".into()), error: None });
             self.start = ts;
         }
     }

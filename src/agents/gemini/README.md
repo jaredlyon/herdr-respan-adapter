@@ -47,8 +47,11 @@ be classified reliably. Core suppresses native model spans when the proxy is
 active, applies content caps/redaction, and owns span keys and parenting.
 
 Per-session persisted state survives one-shot hook processes, with bounded
-payload and token-id deduplication. Content fields are scrubbed/capped before
-adapter-state persistence, including metadata-only mode. Native state changes
+queued-event-id and transcript token-id deduplication. Each native ingress gets
+a fresh persisted queue id, so replaying that envelope is idempotent while
+identical tool callbacks and stream chunks remain distinct observations.
+Content fields are scrubbed/capped before adapter-state persistence, including
+metadata-only mode. Native state changes
 are serialized separately from bridge ingestion. Source timestamps identify
 turns/requests/tools; observation timestamps measure the hook-to-boundary window,
 not exact provider transport timing. No final chunk is fabricated if shutdown

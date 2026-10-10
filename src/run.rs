@@ -1,4 +1,7 @@
 //! Launch-local endpoint overrides; no agent config or credential writes.
+//! Off/paused runs bypass proxy configuration entirely and use the same agent executable.
+//! Windows launches resolve PATH/PATHEXT shims before spawning; Unix lookup is unchanged.
+//! Codex profile files overlay root endpoints; Qwen prefers configured OpenAI upstreams.
 use crate::{
     config::Config,
     paths::Paths,
@@ -57,6 +60,10 @@ fn codex_endpoint(home: &std::path::Path, args: &[String]) -> Result<Option<(Str
                 profile = arguments.next().map(String::as_str);
                 None
             }
+            _ if arg.starts_with("--profile=") => {
+                profile = arg.strip_prefix("--profile=");
+                None
+            }
             _ => arg.strip_prefix("--config="),
         };
         if let Some((key, value)) = setting.and_then(|s| s.split_once('=')) {
@@ -66,22 +73,36 @@ fn codex_endpoint(home: &std::path::Path, args: &[String]) -> Result<Option<(Str
             overrides.insert(key.trim(), parsed);
         }
     }
+    // Current Codex profiles overlay root settings; older versions used inline tables.
+    let selected = profile.map(|name| -> Result<toml::Value> {
+        match fs::read_to_string(home.join(format!("{name}.config.toml"))) {
+            Ok(text) => Ok(toml::from_str(&text)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => config
+                .get("profiles").and_then(|profiles| profiles.get(name)).cloned()
+                .ok_or_else(|| "selected Codex profile cannot be resolved".into()),
+            Err(e) => Err(e.into()),
+        }
+    }).transpose()?;
     let provider = overrides.get("model_provider")
-        .or_else(|| profile.and_then(|p| config.get("profiles")?.get(p)?.get("model_provider")))
+        .or_else(|| selected.as_ref().and_then(|p| p.get("model_provider")))
         .or_else(|| config.get("model_provider"))
         .and_then(toml::Value::as_str).unwrap_or("openai");
     if provider == "openai" {
         return Ok(overrides.get("openai_base_url")
-            .or_else(|| profile.and_then(|p| config.get("profiles")?.get(p)?.get("openai_base_url")))
+            .or_else(|| selected.as_ref().and_then(|p| p.get("openai_base_url")))
             .or_else(|| config.get("openai_base_url"))
             .and_then(toml::Value::as_str).map(|url| ("openai_base_url".into(),url.into())));
     }
     let key = format!("model_providers.{provider}.base_url");
     let base = overrides.get(key.as_str())
+        .or_else(|| selected.as_ref()?.get("model_providers")?.get(provider)?.get("base_url"))
         .or_else(|| config.get("model_providers")?.get(provider)?.get("base_url"))
         .and_then(toml::Value::as_str)
         .ok_or("custom Codex provider needs base_url for proxy routing")?;
     Ok(Some((key, base.into())))
+}
+fn agent_program(kind: &str) -> &str {
+    if kind == "cursor" { "cursor-agent" } else { kind }
 }
 fn build_launch(
     paths: &Paths,
@@ -94,7 +115,7 @@ fn build_launch(
         .first()
         .ok_or("usage: run <agent> [-- args] or run --protocol P -- command")?;
     let mut launch = Launch {
-        command: first.clone(),
+        command: agent_program(first).into(),
         args: args[1..]
             .iter()
             .skip_while(|s| s.as_str() == "--")
@@ -131,7 +152,15 @@ fn build_launch(
         "codex"=>{
             // Only mode and endpoint are inspected; credentials never enter registration.
             let home=env.get("CODEX_HOME").map(std::path::PathBuf::from).unwrap_or(crate::paths::home()?.join(".codex"));
-            if let Some((key, original))=codex_endpoint(&home,&launch.args)? {
+            let resolved = match codex_endpoint(&home,&launch.args) {
+                Ok(resolved) => resolved,
+                Err(_) => {
+                    eprintln!("herdr-respan: Codex provider cannot be resolved; launching without interception");
+                    launch.proxy=false;
+                    return Ok(launch);
+                }
+            };
+            if let Some((key, original))=resolved {
                 launch.upstream.insert("openai".into(), original);
                 // A later original CLI override must not bypass interception.
                 let mut index=0;
@@ -174,7 +203,12 @@ fn build_launch(
             }
             launch.env.insert("OPENCODE_CONFIG_CONTENT".into(),serde_json::to_string(&value)?);
         },
-        "qwen"=>{set_protocol(&mut launch.env,"openai",&url("openai"));launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL","https://dashscope.aliyuncs.com/compatible-mode/v1".into()));},
+        "qwen"=>{
+            set_protocol(&mut launch.env,"openai",&url("openai"));
+            let configured=config.proxy.upstream.get("openai").filter(|u|u.trim_end_matches('/')!="https://api.openai.com");
+            let fallback=configured.map(|_|endpoint(config,"openai")).unwrap_or_else(||"https://dashscope.aliyuncs.com/compatible-mode/v1".into());
+            launch.upstream.insert("openai".into(),upstream("OPENAI_BASE_URL",fallback));
+        },
         "kimi"=>{
             if env.get("HERDR_RESPAN").is_some_and(|v|v=="off") {launch.proxy=false;}
             else{
@@ -358,8 +392,45 @@ fn ensure(paths: &Paths) -> Result<Info> {
         }
     }
 }
-fn command(launch: &Launch) -> Command {
-    let mut command = Command::new(&launch.command);
+#[cfg(windows)]
+fn resolve_program(
+    program: &str,
+    path: Option<&std::ffi::OsStr>,
+    pathext: Option<&std::ffi::OsStr>,
+) -> Result<std::path::PathBuf> {
+    use std::{ffi::OsString, path::Path};
+    let program_path = Path::new(program);
+    let extensions = pathext.filter(|value| !value.is_empty())
+        .map(|value| value.to_string_lossy())
+        .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
+    let directories = if program_path.components().count() > 1 || program_path.is_absolute() {
+        vec![std::path::PathBuf::new()]
+    } else {
+        path.map(std::env::split_paths).into_iter().flatten().collect()
+    };
+    for directory in directories {
+        for extension in std::iter::once("").chain(extensions.split(';').filter(|s| !s.is_empty())) {
+            let mut name = OsString::from(program);
+            name.push(extension);
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Ok(std::path::absolute(candidate)?);
+            }
+        }
+    }
+    Err(format!("program not found: {program}").into())
+}
+fn program_command(program: &str) -> Result<Command> {
+    #[cfg(windows)]
+    let program = resolve_program(
+        program,
+        std::env::var_os("PATH").as_deref(),
+        std::env::var_os("PATHEXT").as_deref(),
+    )?;
+    Ok(Command::new(program))
+}
+fn command(launch: &Launch) -> Result<Command> {
+    let mut command = program_command(&launch.command)?;
     command
         .args(&launch.args)
         .env_remove("HERDR_RESPAN_PROXY")
@@ -367,7 +438,7 @@ fn command(launch: &Launch) -> Command {
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    command
+    Ok(command)
 }
 fn exit_code(status: std::process::ExitStatus) -> i32 {
     if let Some(code) = status.code() {
@@ -420,25 +491,41 @@ fn wait(command: &mut Command) -> Result<i32> {
     }
     Ok(exit_code(child.wait()?))
 }
+fn direct_command(args: &[String]) -> Result<Command> {
+    let first = args.first().ok_or("usage: run <agent> [-- args] or run --protocol P -- command")?;
+    let (program, rest) = if first == "--protocol" {
+        let protocol = args.get(1).ok_or("missing protocol")?;
+        if !["anthropic", "openai", "gemini"].contains(&protocol.as_str()) {
+            return Err("protocol must be anthropic, openai, or gemini".into());
+        }
+        if args.get(2).map(String::as_str) != Some("--") {
+            return Err("generic run needs -- before command".into());
+        }
+        (args.get(3).ok_or("missing command")?.as_str(), &args[4..])
+    } else {
+        if !crate::cli::KINDS.contains(&first.as_str()) {
+            return Err("unknown agent".into());
+        }
+        let offset = 1 + usize::from(args.get(1).map(String::as_str) == Some("--"));
+        (agent_program(first), &args[offset..])
+    };
+    let mut command = program_command(program)?;
+    command.args(rest).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    Ok(command)
+}
 pub fn run(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
-    let mut env: BTreeMap<String, String> = std::env::vars().collect();
-    // Global `off` behaves like `HERDR_RESPAN=off`: launch the agent directly, no proxy, no spans.
-    if crate::gate::is_off(&paths.state) { env.insert("HERDR_RESPAN".into(), "off".into()); }
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    // Run is explicitly requested outside herdr too; only tracing switches gate it.
+    if !crate::gate::allowed(
+        &paths.state,
+        Some("1"),
+        env.get("HERDR_RESPAN").map(String::as_str),
+        env.get("HERDR_WORKSPACE_ID").map(String::as_str),
+    ) {
+        std::process::exit(wait(&mut direct_command(args)?)?);
+    }
     // Validate the requested agent before touching daemon state.
     let mut launch = build_launch(paths, config, args, "http://127.0.0.1:0/r/validation", &env)?;
-    if env.get("HERDR_RESPAN").is_some_and(|v| v == "off") {
-        launch.env.clear();
-        launch.args = if args.first().map(String::as_str) == Some("--protocol") {
-            args[4..].to_vec()
-        } else {
-            args[1..]
-                .iter()
-                .skip_while(|s| s.as_str() == "--")
-                .cloned()
-                .collect()
-        };
-        std::process::exit(wait(&mut command(&launch))?);
-    }
     let run = crate::record::random_id()?;
     let mut cleanup = None;
     if launch.proxy {
@@ -507,7 +594,7 @@ pub fn run(paths: &Paths, config: &Config, args: &[String]) -> Result<()> {
         eprintln!("herdr-respan: native exporter unavailable; launching without it");
     }
     launch.env.insert("HERDR_RESPAN_RUN_ID".into(), run);
-    let result = wait(&mut command(&launch));
+    let result = command(&launch).and_then(|mut command| wait(&mut command));
     drop(cleanup);
     std::process::exit(result?);
 }
@@ -766,5 +853,120 @@ mod tests {
                 assert_eq!(fs::metadata(paths.state.join(name)).unwrap().permissions().mode()&0o777,0o700);
             }
         }
+    }
+    #[test]
+    fn direct_launch_preserves_arguments_and_environment_for_every_kind() {
+        #[cfg(windows)]
+        if std::env::var_os("HERDR_RESPAN_RUN_TEST_PATH").is_none() {
+            let temp = crate::tests::Temp::new();
+            for kind in crate::cli::KINDS.iter().copied().chain(["custom"]) {
+                fs::write(temp.path.join(format!("{}.cmd", agent_program(kind))), "@echo off\n").unwrap();
+            }
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "run::tests::direct_launch_preserves_arguments_and_environment_for_every_kind"])
+                .env("PATH", &temp.path).env("PATHEXT", ".CMD")
+                .env("HERDR_RESPAN_RUN_TEST_PATH", &temp.path)
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        let temp = crate::tests::Temp::new();
+        let paths = Paths { state: temp.path.join("state"), config: temp.path.join("config") };
+        let env = BTreeMap::from([
+            ("CODEX_HOME".into(), temp.path.join("codex").to_string_lossy().into_owned()),
+            ("COPILOT_HOME".into(), temp.path.join("copilot").to_string_lossy().into_owned()),
+            ("KIMI_MODEL_NAME".into(), "mock".into()),
+            ("KIMI_MODEL_API_KEY".into(), "synthetic".into()),
+        ]);
+        let expected_program = |kind: &str| {
+            #[cfg(windows)]
+            { std::path::PathBuf::from(std::env::var_os("HERDR_RESPAN_RUN_TEST_PATH").unwrap())
+                .join(format!("{}.CMD", agent_program(kind))).into_os_string() }
+            #[cfg(unix)]
+            { std::ffi::OsString::from(agent_program(kind)) }
+        };
+        for kind in crate::cli::KINDS {
+            let args = [*kind, "--", "--", "--marker"].map(String::from);
+            let direct = direct_command(&args).unwrap();
+            assert_eq!(direct.get_program(), expected_program(kind));
+            assert_eq!(direct.get_args().collect::<Vec<_>>(), vec!["--", "--marker"]);
+            assert_eq!(direct.get_envs().count(), 0);
+            if *kind != "cursor" {
+                let launch = build_launch(&paths, &Config::default(), &args, "http://127.0.0.1:123/r/run", &env).unwrap();
+                assert_eq!(command(&launch).unwrap().get_program(), direct.get_program(), "{kind}");
+            } else {
+                assert_eq!(agent_program(kind), "cursor-agent");
+            }
+        }
+        let args = ["--protocol", "openai", "--", "custom", "--", "--marker"].map(String::from);
+        let command = direct_command(&args).unwrap();
+        assert_eq!(command.get_program(), expected_program("custom"));
+        assert_eq!(command.get_args().collect::<Vec<_>>(), vec!["--", "--marker"]);
+        assert!(direct_command(&["unknown".into()]).is_err());
+        assert!(direct_command(&["--protocol".into(), "openai".into(), "--".into()]).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn windows_program_resolution_honors_path_and_pathext() {
+        let temp = crate::tests::Temp::new();
+        let stubs = temp.path.join("stubs with spaces");
+        fs::create_dir_all(&stubs).unwrap();
+        for extension in ["cmd", "bat", "exe", "com"] {
+            fs::write(stubs.join(format!("shim.{extension}")), "@echo off\n").unwrap();
+            let pathext = std::ffi::OsString::from(format!(".{extension}"));
+            assert_eq!(resolve_program("shim", Some(stubs.as_os_str()), Some(&pathext)).unwrap(),
+                stubs.join(format!("shim.{extension}")));
+        }
+        let pathext = std::ffi::OsStr::new(".CMD;.EXE;.BAT;.COM");
+        assert_eq!(resolve_program("shim", Some(stubs.as_os_str()), Some(pathext)).unwrap(), stubs.join("shim.CMD"));
+        let explicit = stubs.join("shim.cmd");
+        assert_eq!(resolve_program(explicit.to_str().unwrap(), None, Some(pathext)).unwrap(), explicit);
+        assert!(resolve_program("missing", Some(stubs.as_os_str()), Some(pathext))
+            .unwrap_err().to_string().contains("missing"));
+    }
+    #[test]
+    fn codex_current_profiles_overlay_root_and_override_the_effective_provider() {
+        let temp = crate::tests::Temp::new();
+        let paths = Paths { state: temp.path.join("state"), config: temp.path.join("config") };
+        let root = "model_provider='root'\n[model_providers.root]\nbase_url='http://127.0.0.1:8123/v1'\n[model_providers.selected]\nbase_url='http://127.0.0.1:8124/v1'\n";
+        let profile = "model_provider='selected'\n[model_providers.selected]\nbase_url='http://127.0.0.1:8125/v1'\n";
+        fs::write(temp.path.join("config.toml"), root).unwrap();
+        fs::write(temp.path.join("local.config.toml"), profile).unwrap();
+        let env = BTreeMap::from([("CODEX_HOME".into(), temp.path.to_string_lossy().into_owned())]);
+        for flags in [vec!["-p", "local"], vec!["--profile", "local"], vec!["--profile=local"]] {
+            let mut args = vec!["codex".into()];
+            args.extend(flags.into_iter().map(String::from));
+            args.push("exec".into());
+            let launch = build_launch(&paths, &Config::default(), &args, "http://127.0.0.1:123/r/run", &env).unwrap();
+            assert!(launch.proxy);
+            assert_eq!(launch.upstream["openai"], "http://127.0.0.1:8125/v1");
+            assert!(launch.args.iter().any(|arg| arg == "model_providers.selected.base_url=\"http://127.0.0.1:123/r/run/openai\""));
+        }
+        fs::write(temp.path.join("local.config.toml"), "model_provider='selected'\n").unwrap();
+        let args = ["--profile=local"].map(String::from);
+        assert_eq!(codex_endpoint(&temp.path, &args).unwrap().unwrap().1, "http://127.0.0.1:8124/v1");
+        fs::write(temp.path.join("local.config.toml"), "model_provider='unresolved'\n").unwrap();
+        let args = ["codex", "--profile=local", "exec", "--marker"].map(String::from);
+        let launch = build_launch(&paths, &Config::default(), &args, "http://127.0.0.1:123/r/run", &env).unwrap();
+        assert!(!launch.proxy);
+        assert_eq!(launch.args, args[1..]);
+        assert!(launch.env.is_empty());
+        assert_eq!(fs::read_to_string(temp.path.join("config.toml")).unwrap(), root);
+    }
+    #[test]
+    fn qwen_honors_configured_upstream_before_its_default() {
+        let temp = crate::tests::Temp::new();
+        let paths = Paths { state: temp.path.join("state"), config: temp.path.join("config") };
+        let mut config = Config::default();
+        let args = ["qwen".into()];
+        let base = "http://127.0.0.1:123/r/run";
+        let launch = build_launch(&paths, &config, &args, base, &BTreeMap::new()).unwrap();
+        assert_eq!(launch.upstream["openai"], "https://dashscope.aliyuncs.com/compatible-mode/v1");
+        config.proxy.upstream.insert("openai".into(), "http://127.0.0.1:8123/v1".into());
+        let launch = build_launch(&paths, &config, &args, base, &BTreeMap::new()).unwrap();
+        assert_eq!(launch.upstream["openai"], "http://127.0.0.1:8123/v1");
+        let env = BTreeMap::from([("OPENAI_BASE_URL".into(), "http://127.0.0.1:8124/v1".into())]);
+        let launch = build_launch(&paths, &config, &args, base, &env).unwrap();
+        assert_eq!(launch.upstream["openai"], "http://127.0.0.1:8124/v1");
     }
 }

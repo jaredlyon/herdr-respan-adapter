@@ -8,6 +8,10 @@ pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
         .replace("__HERDR_RESPAN_BIN__", &serde_json::to_string(&ctx.binary.to_string_lossy())?)
         .replace("__HERDR_RESPAN_STATE__", &serde_json::to_string(&ctx.state_dir.to_string_lossy())?)
         .replace("__HERDR_RESPAN_CONFIG__", &serde_json::to_string(&ctx.config_dir.to_string_lossy())?);
+    let mut notices = vec!["Hermes 0.18.0 supports turns, request usage, tools and children; auxiliary spans require a version with auxiliary observers (verified schema: 0.21.5). Gateway/Discord sessions are excluded. plugins.disabled wins over enabled; remove a pre-existing herdr-respan disabled entry yourself if applicable.".into()];
+    if ctx.project.is_some() {
+        notices.push("Hermes hooks are user-global; --project does not select a different Hermes config.".into());
+    }
     Ok(Plan {
         edits: vec![
             // Validate the config before staging either plugin asset.
@@ -15,7 +19,7 @@ pub fn plan(ctx: &SetupCtx) -> Result<Plan> {
             Edit::WriteFile { path: plugin.join("plugin.yaml"), contents: include_bytes!("assets/herdr-respan/plugin.yaml").to_vec(), id: "herdr-respan-hermes-manifest".into() },
             Edit::WriteFile { path: plugin.join("__init__.py"), contents: source.into_bytes(), id: "herdr-respan-hermes-observers".into() },
         ],
-        notices: vec!["Hermes 0.18.0 supports turns, request usage, tools and children; auxiliary spans require a version with auxiliary observers (verified schema: 0.21.5). Gateway/Discord sessions are excluded. plugins.disabled wins over enabled; remove a pre-existing herdr-respan disabled entry yourself if applicable.".into()],
+        notices,
         ..Default::default()
     })
 }
@@ -24,7 +28,7 @@ fn hermes_home(ctx: &SetupCtx) -> PathBuf {
     if let Ok(value) = std::env::var("HERMES_HOME") {
         let value = value.trim();
         if !value.is_empty() {
-            return if value == "~" { ctx.home.clone() } else if let Some(rest) = value.strip_prefix("~/").or_else(|| value.strip_prefix("~\\")) { ctx.home.join(rest) } else { PathBuf::from(value) };
+            return crate::setup::expand_home(&ctx.home, std::path::Path::new(value));
         }
     }
     #[cfg(windows)] {
@@ -181,6 +185,20 @@ fn edit(text: &str, add: bool) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test] fn project_setup_reports_user_global_scope() {
+        let tmp = crate::tests::Temp::new();
+        let paths = crate::paths::Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
+        let mut ctx = SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
+        assert!(!plan(&ctx).unwrap().notices.iter().any(|s| s.contains("user-global")));
+        ctx.project = Some(tmp.path.join("project"));
+        let plan = plan(&ctx).unwrap();
+        assert!(plan.notices.iter().any(|s| s == "Hermes hooks are user-global; --project does not select a different Hermes config."));
+        assert!(plan.edits.iter().all(|e| match e {
+            Edit::Text { file, .. } => !file.starts_with(ctx.project.as_ref().unwrap()),
+            Edit::WriteFile { path, .. } => !path.starts_with(ctx.project.as_ref().unwrap()),
+            _ => false,
+        }));
+    }
     #[test]
     fn comment_preserving_roundtrip() {
         for original in ["", "# header\nmodel: example\n", "# header\r\nplugins:\r\n  enabled:\r\n    # user note\r\n    - herdr-agent-state # retained\r\n  disabled: [other]\r\n", "plugins:\n  enabled: [herdr-agent-state, 'comma,name'] # retain\n  disabled: []\n", "plugins:\n  enabled: [] # empty\n", "plugins:\n  enabled: # originally null\n    # keep comment\n", "plugins:\n  enabled: [ hermes-other ] # spacing\n", "plugins:\n  disabled: [] # retained\n"] {

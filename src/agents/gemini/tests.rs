@@ -14,6 +14,20 @@ fn records(tmp: &crate::tests::Temp) -> Vec<SpanRecord> {
         std::fs::read_to_string(p).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect::<Vec<_>>()
     }).collect()
 }
+// Requeue the persisted envelope, not a second native ingress with equal content.
+fn hook_and_replay(ctx: &mut HookCtx, bytes: &[u8]) {
+    let lock = ctx.try_lock("gemini-native").unwrap().unwrap();
+    hook(ctx, bytes).unwrap();
+    let files = queue_files(ctx).unwrap();
+    assert_eq!(files.len(), 1);
+    let file = &files[0];
+    let queued = std::fs::read(file).unwrap();
+    drop(lock);
+    settle(ctx).unwrap();
+    std::fs::write(file, queued).unwrap();
+    settle(ctx).unwrap();
+    assert!(queue_files(ctx).unwrap().is_empty());
+}
 #[test]
 fn multichunk_golden_batch_and_real_bridge_tree() {
     let tmp = crate::tests::Temp::new(); let ctx = context(&tmp);
@@ -43,7 +57,7 @@ fn hook_state_survives_processes_and_replayed_chunks() {
     for (index, payload) in fixture(&path).iter().enumerate() {
         if index == 5 { std::fs::write(&path, include_str!("fixtures/session.jsonl")).unwrap(); }
         let mut ctx = context(&tmp); let bytes = serde_json::to_vec(payload).unwrap();
-        hook(&mut ctx, &bytes).unwrap(); hook(&mut ctx, &bytes).unwrap();
+        hook_and_replay(&mut ctx, &bytes);
         if index < 5 { assert!(records(&tmp).is_empty()); }
     }
     let all = records(&tmp); assert_eq!(all.iter().filter(|r| r.log_type == "chat").count(), 1);
@@ -143,8 +157,14 @@ fn concurrent_tools_with_identical_millisecond_timestamps_keep_distinct_spans() 
 #[test]
 fn captured_cli_turns_preserve_exact_model_rounds_usage_and_echo_tool() {
     let tmp = crate::tests::Temp::new();
-    let path = tmp.path.join("session.jsonl");
+    // Keep the native Gemini path discriminator for SessionStart/SessionEnd.
+    let path = tmp.path.join(".gemini/chats/session.jsonl");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut payloads: Vec<Value> = serde_json::from_str(include_str!("fixtures/live-hooks.json")).unwrap();
+    // The captured CLI emitted distinct callbacks; replay below reuses queue ids.
+    for (index, payload) in payloads.iter().enumerate() {
+        assert!(!payloads[..index].contains(payload), "duplicate captured callback at {index}");
+    }
     let tool_lines: Vec<_> = include_str!("fixtures/live-tool.jsonl").lines().collect();
     for payload in &mut payloads {
         payload["transcript_path"] = json!(path.to_string_lossy());
@@ -158,8 +178,7 @@ fn captured_cli_turns_preserve_exact_model_rounds_usage_and_echo_tool() {
         }
         let bytes = serde_json::to_vec(payload).unwrap();
         let mut ctx = context(&tmp);
-        hook(&mut ctx, &bytes).unwrap();
-        hook(&mut ctx, &bytes).unwrap();
+        hook_and_replay(&mut ctx, &bytes);
     }
     let all = records(&tmp);
     assert_eq!(all.len(), 6);
@@ -202,4 +221,57 @@ fn contended_hook_queues_metadata_only_content_and_drains_original_context() {
     let all=records(&tmp);let chat=all.iter().find(|r|r.log_type=="chat").unwrap();assert!(chat.input.is_none()&&chat.output.is_none());
     assert_eq!(chat.run_id.as_deref(),Some("original-run"));
     assert_eq!(all.iter().find(|r|r.log_type=="agent").unwrap().metadata["herdr.pane_id"],json!("original-pane"));
+}
+
+#[test]
+fn superseding_turn_closes_outstanding_tools_under_old_turn() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    let values = fixture(&tmp.path.join("absent.jsonl"));
+    let mut tool = values[0].clone();
+    tool["hook_event_name"] = json!("BeforeTool");
+    tool["tool_name"] = json!("read_file"); tool["tool_input"] = json!({"path":"a"});
+    let mut second = values[0].clone();
+    second["timestamp"] = json!("2026-10-09T12:00:02.000Z"); second["prompt"] = json!("second prompt");
+    for payload in [&values[0], &tool, &second, &values[5]] {
+        hook(&mut ctx, &serde_json::to_vec(payload).unwrap()).unwrap();
+    }
+    let all = records(&tmp); assert_eq!(all.len(), 3);
+    let old = all.iter().find(|r| r.log_type == "agent" && r.status == "error").unwrap();
+    let tool = all.iter().find(|r| r.log_type == "tool").unwrap();
+    assert_eq!(tool.parent_key.as_ref(), Some(&old.span_key));
+    assert_eq!(tool.trace_key, old.trace_key); assert_eq!(tool.status, "error");
+    assert_eq!(tool.status_message.as_deref(), Some("tool response not observed"));
+}
+
+#[test]
+fn identical_tool_ingresses_keep_fifo_sequences_and_delivery_replay_is_idempotent() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    let values = fixture(&tmp.path.join("absent.jsonl"));
+    let mut tools: Vec<Value> = serde_json::from_str(include_str!("fixtures/tools-same-timestamp.json")).unwrap();
+    for payload in &mut tools { payload["transcript_path"] = values[0]["transcript_path"].clone(); }
+    for payload in [&values[0], &tools[0], &tools[0], &tools[3], &tools[3], &values[5]] {
+        hook_and_replay(&mut ctx, &serde_json::to_vec(payload).unwrap());
+    }
+    let all = records(&tmp);
+    let tools: Vec<_> = all.iter().filter(|r| r.log_type == "tool").collect();
+    assert_eq!(all.len(), 3); assert_eq!(tools.len(), 2);
+    for suffix in ["-1", "-2"] { assert!(tools.iter().any(|r| r.span_key.ends_with(suffix))); }
+    assert_eq!(tools[0].parent_key, tools[1].parent_key);
+    assert!(tools.iter().all(|r| r.status == "ok"));
+}
+
+#[test]
+fn identical_stream_ingresses_accumulate_but_queued_replay_does_not() {
+    let tmp = crate::tests::Temp::new(); let mut ctx = context(&tmp);
+    let values = fixture(&tmp.path.join("absent.jsonl"));
+    let mut chunk = values[2].clone();
+    chunk["llm_response"].as_object_mut().unwrap().remove("usageMetadata");
+    chunk["llm_response"]["text"] = json!("ha");
+    chunk["llm_response"]["candidates"][0]["content"]["parts"] = json!(["ha"]);
+    for payload in [&values[0], &values[1], &chunk, &chunk, &values[4], &values[5]] {
+        hook_and_replay(&mut ctx, &serde_json::to_vec(payload).unwrap());
+    }
+    let all = records(&tmp); assert_eq!(all.len(), 2);
+    let chat = all.iter().find(|r| r.log_type == "chat").unwrap();
+    assert_eq!(chat.output, Some(json!([{"role":"assistant","content":"haha"}])));
 }

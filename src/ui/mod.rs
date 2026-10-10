@@ -80,7 +80,8 @@ impl Terminal {
         #[cfg(windows)] {
             let mut saved = 0;
             unsafe {
-                if console::GetConsoleMode(console::handle(), &mut saved) == 0 || console::SetConsoleMode(console::handle(), saved & !7) == 0 { return Err("cannot configure console input".into()); }
+                // 0x0200 ENABLE_VIRTUAL_TERMINAL_INPUT: deliver the bracketed-paste markers as escape bytes.
+                if console::GetConsoleMode(console::handle(), &mut saved) == 0 || console::SetConsoleMode(console::handle(), (saved & !7) | 0x0200) == 0 { return Err("cannot configure console input".into()); }
             }
             let terminal = Self { saved };
             let mut stdout = std::io::stdout();

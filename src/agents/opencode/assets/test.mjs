@@ -71,16 +71,32 @@ try {
   for (const event of v1.slice(0, 3)) subagent.capture.v1(event);
   subagent.capture.v1({ type: "session.created", properties: { sessionID: "child", info: { id: "child", parentID: "s1", title: "explore", time: { created: 1030 } } } });
   subagent.capture.v1({ type: "message.part.updated", properties: { sessionID: "s1", part: { id: "task-part", sessionID: "s1", messageID: "a1", type: "tool", callID: "task-call", tool: "task", state: { status: "running", input: { subagent_type: "explore" }, metadata: { sessionId: "child" }, time: { start: 1030 } } } } });
+  // Captured V1 child admission: prompt hook, user message, then its text part (IDs normalized).
+  const childUser = { id: "child-user", role: "user", sessionID: "child", time: { created: 1031 },
+    agent: "explore", model: { providerID: "mock", modelID: "mock-model" } };
+  const childPrompt = { type: "text", text: "Say the deterministic mock text. Do not use any tools.",
+    messageID: "child-user", sessionID: "child", id: "child-prompt" };
+  subagent.capture.prompt({ sessionID: "child", agent: "explore", messageID: "child-user" },
+    { message: childUser, parts: [childPrompt] });
+  subagent.capture.v1({ type: "message.updated", properties: { sessionID: "child", info: childUser } });
+  subagent.capture.v1({ type: "message.part.updated", properties: { sessionID: "child", part: childPrompt, time: 1032 } });
   const childMessage = structuredClone(v1[9]);
   childMessage.properties.sessionID = "child";
   childMessage.properties.info.sessionID = "child";
+  childMessage.properties.info.parentID = "child-user";
   subagent.capture.v1(childMessage);
   subagent.capture.v1({ type: "session.idle", properties: { sessionID: "child" } });
   assert.equal(subagent.batches.length, 0, "child idle does not close the parent turn");
+  subagent.capture.v1(v1[9]);
   subagent.capture.v1(v1.at(-1));
   const subEvents = subagent.batches[0].events;
   assert.equal(subEvents.find((e) => e.type === "subagent_start").parent_id, "s1:task-call");
   assert.equal(subEvents.find((e) => e.type === "chat" && e.id === "child:a1").parent_id, "child");
+  const childChats = subEvents.filter((e) => e.type === "chat" && e.parent_id === "child");
+  assert.equal(childChats.length, 1, "child user text is not an assistant chat");
+  assert.equal(childChats[0].id, "child:a1");
+  assert.ok(!subEvents.some((e) => e.error === "message not completed"), "no phantom failed chat");
+  assert.deepEqual(subEvents[0].prompt, [{ type: "text", text: "List the files" }], "child prompt does not replace root prompt");
 
   const queued = harness();
   for (const event of v1.slice(0, 10)) queued.capture.v1(event);

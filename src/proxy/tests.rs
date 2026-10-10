@@ -143,6 +143,7 @@ async fn http_protocols_stream_headers_and_usage() {
             let (headers, body) = request(&mut stream);
             assert_eq!(body, expected);
             for line in [
+                "accept-encoding: identity",
                 "authorization: Bearer synthetic-token",
                 "x-api-key: synthetic-key",
                 "chatgpt-account-id: account",
@@ -175,7 +176,7 @@ async fn http_protocols_stream_headers_and_usage() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
-            write!(stream,"POST /r/{run}/{protocol}/{path} HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\nAuthorization: Bearer synthetic-token\r\nX-Api-Key: synthetic-key\r\nChatGPT-Account-ID: account\r\nAnthropic-Beta: oauth-2025-04-20\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\nxai-grok-cli: synthetic-session\r\nX-HRA-Exact: MixedCase +/= bytes\r\nX-HRA-Duplicate: first\r\nX-HRA-Duplicate: SECOND\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+            write!(stream,"POST /r/{run}/{protocol}/{path} HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\nAuthorization: Bearer synthetic-token\r\nX-Api-Key: synthetic-key\r\nChatGPT-Account-ID: account\r\nAnthropic-Beta: oauth-2025-04-20\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\nxai-grok-cli: synthetic-session\r\nAccept-Encoding: gzip, br\r\nX-HRA-Exact: MixedCase +/= bytes\r\nX-HRA-Duplicate: first\r\nX-HRA-Duplicate: SECOND\r\nConnection: close\r\n\r\n",body.len()).unwrap();
             stream.write_all(&body).unwrap();
             let mut bytes = Vec::new();
             let mut buffer = [0; 1024];
@@ -233,6 +234,7 @@ async fn websocket_frames_auth_warmup_and_multiple_requests() {
             |request: &tungstenite::handshake::server::Request,
              response: tungstenite::handshake::server::Response| {
                 assert_eq!(request.headers()["authorization"], "Bearer synthetic-token");
+                assert_eq!(request.headers()["accept-encoding"], "gzip");
                 assert_eq!(request.headers()["chatgpt-account-id"], "account");
                 assert_eq!(
                     request.headers()["openai-beta"],
@@ -268,6 +270,7 @@ async fn websocket_frames_auth_warmup_and_multiple_requests() {
             .into_client_request()
             .unwrap();
         for (key, value) in [
+            ("accept-encoding", "gzip"),
             ("authorization", "Bearer synthetic-token"),
             ("chatgpt-account-id", "account"),
             ("openai-beta", "responses_websockets=2026-02-06"),

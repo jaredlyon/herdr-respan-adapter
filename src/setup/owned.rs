@@ -16,7 +16,12 @@ pub struct Pending {
     pub remove: Vec<Entry>,
 }
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
-pub struct Entry { pub agent: String, pub id: String, pub file: PathBuf, pub existed: bool, pub change: Change }
+pub struct Entry {
+    pub agent: String, pub id: String, pub file: PathBuf, pub existed: bool, pub change: Change,
+    /// Missing scope in legacy journals means a user-global installation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<PathBuf>,
+}
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag="kind")]
 pub enum Change {

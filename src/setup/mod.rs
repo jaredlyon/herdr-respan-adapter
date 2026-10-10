@@ -8,6 +8,7 @@ use crate::{paths::Paths, Result};
 use owned::{Change, Entry, Owned};
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct SetupCtx {
     pub home: PathBuf, pub config_dir: PathBuf, pub state_dir: PathBuf,
     pub project: Option<PathBuf>, pub binary: PathBuf,
@@ -23,6 +24,12 @@ impl SetupCtx {
     pub fn hook_command(&self, kind: &str) -> String {
         crate::agents::common::hookcmd::command(self, kind, if cfg!(windows) { crate::agents::common::hookcmd::Shell::Cmd } else { crate::agents::common::hookcmd::Shell::Posix })
     }
+}
+/// Expand the home prefix used by relocated agent config resolvers.
+pub(crate) fn expand_home(home: &Path, path: &Path) -> PathBuf {
+    if path == Path::new("~") { return home.to_path_buf(); }
+    if let Some(rest) = path.to_str().and_then(|p| p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\"))) { return home.join(rest); }
+    path.to_path_buf()
 }
 #[derive(Default)]
 pub struct Plan { pub edits: Vec<Edit>, pub notices: Vec<String>, pub offers: Vec<Offer> }
@@ -258,7 +265,7 @@ fn stage(ctx: &SetupCtx, agent: &str, plan: &Plan, mut files: files::Files, mut 
                 staged.after=Some(after.into_bytes());Change::TextArg {arg:arg.clone()}
             }
         };
-        owned.record_install(Entry { agent: agent.into(), id: id.into(), file: file.into(), existed, change });
+        owned.record_install(Entry { agent: agent.into(), id: id.into(), file: file.into(), existed, change, project: ctx.project.clone() });
     }
     Ok((files, owned))
 }
@@ -288,7 +295,10 @@ pub fn remove(ctx: &SetupCtx, agents: &[String]) -> Result<()> {
     let lock = transaction_lock(&ctx.state_dir)?;
     let mut owned = recover_locked(ctx, None, &lock)?;
     let mut files = files::Files::new();
-    let entries: Vec<_> = owned.entries.iter().rev().filter(|e| agents.is_empty() || agents.contains(&e.agent)).cloned().collect();
+    let entries: Vec<_> = owned.entries.iter().rev().filter(|e| {
+        (agents.is_empty() || agents.contains(&e.agent)) &&
+        ((agents.is_empty() && ctx.project.is_none()) || e.project == ctx.project)
+    }).cloned().collect();
     for entry in entries {
         remove_entry(ctx, &entry, &mut files, None)?;
         owned.record_remove(entry);
@@ -335,17 +345,79 @@ fn refresh_owned_agents(ctx:&SetupCtx,agents:&[crate::agents::AgentSpec])->Resul
     let mut owned = recover_locked(ctx, None, &lock)?;
     let mut files = files::Files::new();
     for agent in agents {
-        if owned.entries.iter().any(|e|e.agent==agent.kind&&matches!(e.change,Change::File {..})) {
-            let mut plan=match (agent.plan)(ctx) {Ok(plan)=>plan,Err(_)=>{crate::log::error(&ctx.state_dir,"owned asset refresh plan failed; skipping agent");continue;}};
+        let scopes: std::collections::BTreeSet<_> = owned.entries.iter()
+            .filter(|e| e.agent == agent.kind && matches!(e.change, Change::File {..}))
+            .map(|e| e.project.clone()).collect();
+        if scopes.is_empty() { continue; }
+        let mut scoped = ctx.clone();
+        for project in scopes {
+            scoped.project = project;
+            let mut plan = match (agent.plan)(&scoped) { Ok(plan) => plan, Err(_) => { crate::log::error(&ctx.state_dir, "owned asset refresh plan failed; skipping agent"); continue; } };
             for offer in &mut plan.offers { plan.edits.append(&mut offer.edits); }
-            plan.edits.retain(|e| matches!(e, Edit::WriteFile { path, id, .. } if owned.entries.iter().any(|o| o.agent == agent.kind && &o.file == path && &o.id == id)));
-            (files, owned) = stage(ctx, agent.kind, &plan, files, owned)?;
+            plan.edits.retain(|e| matches!(e, Edit::WriteFile { path, id, .. } if owned.entries.iter().any(|o| o.agent == agent.kind && o.project == scoped.project && &o.file == path && &o.id == id)));
+            (files, owned) = stage(&scoped, agent.kind, &plan, files, owned)?;
         }
     }
     files::commit(&files, &owned, &ctx.state_dir, &lock)
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn refresh_rebuilds_every_owned_scope_without_new_config_entries() {
+        fn hook(_: &mut crate::record::HookCtx, _: &[u8]) -> Result<()> { Ok(()) }
+        fn assets(ctx: &SetupCtx) -> Result<Plan> {
+            let root = ctx.project.as_ref().unwrap_or(&ctx.home);
+            Ok(Plan { edits: vec![
+                Edit::WriteFile { path: root.join("asset.js"), contents: b"new".to_vec(), id: "herdr-respan-asset".into() },
+                Edit::WriteFile { path: root.join("unowned.js"), contents: b"new".to_vec(), id: "herdr-respan-unowned".into() },
+                Edit::JsonSetIfAbsent { file: root.join("settings.json"), pointer: "/new".into(), value: serde_json::json!(true), id: "herdr-respan-config".into() },
+            ], ..Default::default() })
+        }
+        let tmp = crate::tests::Temp::new();
+        let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
+        let ctx = SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
+        let mut roots = Vec::new();
+        for project in [None, Some(tmp.path.join("project-a")), Some(tmp.path.join("project-b"))] {
+            let mut scoped = ctx.clone(); scoped.project = project;
+            let root = scoped.project.as_ref().unwrap_or(&scoped.home).clone();
+            apply(&scoped, "assets", &Plan { edits: vec![Edit::WriteFile { path: root.join("asset.js"), contents: b"old".to_vec(), id: "herdr-respan-asset".into() }], ..Default::default() }).unwrap();
+            roots.push(root);
+        }
+        let spec = crate::agents::AgentSpec { kind: "assets", display: "assets", hook, plan: assets, reply: None, settle: None };
+        refresh_owned_agents(&ctx, std::slice::from_ref(&spec)).unwrap();
+        assert_eq!(Owned::load(&ctx.state_dir).unwrap().entries.len(), 3);
+        for root in roots {
+            assert_eq!(std::fs::read(root.join("asset.js")).unwrap(), b"new");
+            assert!(!root.join("unowned.js").exists());
+            assert!(!root.join("settings.json").exists());
+        }
+    }
+    #[test] fn remove_respects_project_global_legacy_and_all_scopes() {
+        for mode in ["project", "global", "all", "all-project"] {
+            let tmp = crate::tests::Temp::new();
+            let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") };
+            let ctx = SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
+            let scopes = [None, Some(tmp.path.join("project-a")), Some(tmp.path.join("project-b"))];
+            let mut files = Vec::new();
+            for project in &scopes {
+                let mut scoped = ctx.clone(); scoped.project = project.clone();
+                let file = scoped.project.as_ref().unwrap_or(&scoped.home).join("asset.js");
+                apply(&scoped, "assets", &Plan { edits: vec![Edit::WriteFile { path: file.clone(), contents: b"owned".to_vec(), id: "herdr-respan-asset".into() }], ..Default::default() }).unwrap();
+                files.push(file);
+            }
+            let journal = ctx.state_dir.join("owned.json");
+            let mut legacy: serde_json::Value = serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+            legacy["entries"][0].as_object_mut().unwrap().remove("project");
+            crate::paths::atomic_json(&journal, &legacy).unwrap();
+            let mut removal = ctx.clone();
+            if mode.ends_with("project") { removal.project = scopes[1].clone(); }
+            let agents = if mode.starts_with("all") { vec![] } else { vec!["assets".into()] };
+            remove(&removal, &agents).unwrap();
+            for (i, file) in files.iter().enumerate() {
+                let removed = mode == "all" || (mode.ends_with("project") && i == 1) || (mode == "global" && i == 0);
+                assert_eq!(file.exists(), !removed, "{mode} scope {i}");
+            }
+        }
+    }
     #[test] fn foreign_json_toml_roundtrip() {
         let tmp = crate::tests::Temp::new(); let paths = Paths { state: tmp.path.join("state"), config: tmp.path.join("config") }; let ctx = SetupCtx::new(&paths, tmp.path.join("home"), None).unwrap();
         let json_file = tmp.path.join("hooks.json"); let toml_file = tmp.path.join("config.toml");
@@ -539,7 +611,7 @@ fn refresh_owned_agents(ctx:&SetupCtx,agents:&[crate::agents::AgentSpec])->Resul
     #[test] fn recovery_refuses_unidentifiable_text_without_claiming_installation() {
         let tmp=crate::tests::Temp::new(); let paths=Paths {state:tmp.path.join("state"),config:tmp.path.join("config")};
         let ctx=SetupCtx::new(&paths,tmp.path.join("home"),None).unwrap(); let file=tmp.path.join("unknown.txt"); std::fs::write(&file,"foreign").unwrap();
-        let entry=Entry {agent:"missing-adapter".into(),id:"herdr-respan-unknown".into(),file:file.clone(),existed:true,change:Change::Text};
+        let entry=Entry {agent:"missing-adapter".into(),id:"herdr-respan-unknown".into(),file:file.clone(),existed:true,change:Change::Text,project:None};
         crate::paths::atomic_json(&ctx.state_dir.join("owned.json"),&serde_json::json!({"entries":[],"pending":{"install":[entry],"remove":[]}})).unwrap();
         let before=std::fs::read(ctx.state_dir.join("owned.json")).unwrap();
         assert!(apply(&ctx,"unrelated",&Plan::default()).is_err()); assert!(remove(&ctx,&[]).is_err());

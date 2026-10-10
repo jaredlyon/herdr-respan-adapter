@@ -66,6 +66,10 @@ pub struct Parser {
     pub record: SpanRecord,
     pub warmup: bool,
     pending: Vec<u8>,
+    data: Vec<u8>,
+    skip_lf: bool,
+    blocks: BTreeMap<u64, (Value, String)>,
+    block_bytes: usize,
     raw: Vec<u8>,
     text: String,
     sse: bool,
@@ -112,6 +116,10 @@ impl Parser {
             },
             warmup: request.get("generate") == Some(&Value::Bool(false)),
             pending: Vec::new(),
+            data: Vec::new(),
+            skip_lf: false,
+            blocks: BTreeMap::new(),
+            block_bytes: 0,
             raw: Vec::new(),
             text: String::new(),
             sse: false,
@@ -126,19 +134,25 @@ impl Parser {
             return;
         }
         if self.sse {
-            if self.pending.len().saturating_add(bytes.len()) > MAX_CAPTURE {
-                self.disabled = true;
-                self.pending.clear();
-                return;
-            }
-            self.pending.extend_from_slice(bytes);
-            while let Some(end) = self.pending.iter().position(|b| *b == b'\n') {
-                let line: Vec<u8> = self.pending.drain(..=end).collect();
-                let line = String::from_utf8_lossy(&line);
-                if let Some(data) = line.trim_end().strip_prefix("data:") {
-                    if let Ok(value) = serde_json::from_str::<Value>(data.trim_start()) {
-                        self.event(&value);
+            for &byte in bytes {
+                if self.skip_lf {
+                    self.skip_lf = false;
+                    if byte == b'\n' {
+                        continue;
                     }
+                }
+                if matches!(byte, b'\r' | b'\n') {
+                    self.line();
+                    self.skip_lf = byte == b'\r';
+                } else if self.pending.len() + self.data.len() < MAX_CAPTURE {
+                    self.pending.push(byte);
+                } else {
+                    self.disabled = true;
+                }
+                if self.disabled {
+                    self.pending.clear();
+                    self.data.clear();
+                    break;
                 }
             }
         } else if self.raw.len().saturating_add(bytes.len()) <= MAX_CAPTURE {
@@ -147,6 +161,27 @@ impl Parser {
             self.disabled = true;
             self.raw.clear();
         }
+    }
+    fn line(&mut self) {
+        if self.pending.is_empty() {
+            if self.data.last() == Some(&b'\n') {
+                self.data.pop();
+            }
+            if let Ok(value) = serde_json::from_slice::<Value>(&self.data) {
+                self.event(&value);
+            }
+            self.data.clear();
+        } else if self.pending == b"data" || self.pending.starts_with(b"data:") {
+            let data = self.pending.get(5..).unwrap_or_default();
+            let data = data.strip_prefix(b" ").unwrap_or(data);
+            if self.data.len() + data.len() < MAX_CAPTURE {
+                self.data.extend_from_slice(data);
+                self.data.push(b'\n');
+            } else {
+                self.disabled = true;
+            }
+        }
+        self.pending.clear();
     }
     pub fn event(&mut self, value: &Value) {
         let value = value.get("response").unwrap_or(value); // Responses final envelope and Code Assist.
@@ -185,15 +220,35 @@ impl Parser {
             self.record.status = "error".into();
             self.record.status_message = Some(error.to_string());
         }
+        let index = value.get("index").and_then(Value::as_u64).unwrap_or(0);
         if let Some(delta) = value.get("delta") {
-            if let Some(text) = delta.as_str().or_else(|| {
-                delta
-                    .get("text")
-                    .or_else(|| delta.get("thinking"))
-                    .or_else(|| delta.get("partial_json"))
-                    .and_then(Value::as_str)
+            if let Some(fragment) = delta.get("partial_json").and_then(Value::as_str) {
+                if !fragment.is_empty() {
+                    self.first_token();
+                }
+                if let Some((_, input)) = self.blocks.get_mut(&index) {
+                    if self.block_bytes.saturating_add(fragment.len()) <= MAX_CAPTURE {
+                        input.push_str(fragment);
+                        self.block_bytes += fragment.len();
+                    } else {
+                        self.disabled = true;
+                    }
+                }
+            } else if let Some(text) = delta.as_str().or_else(|| {
+                delta.get("text").or_else(|| delta.get("thinking")).and_then(Value::as_str)
             }) {
                 self.append(text);
+                if let Some((block, _)) = self.blocks.get_mut(&index) {
+                    let key = if delta.get("thinking").is_some() { "thinking" } else { "text" };
+                    if self.block_bytes.saturating_add(text.len()) <= MAX_CAPTURE {
+                        if let Some(Value::String(content)) = block.get_mut(key) {
+                            content.push_str(text);
+                            self.block_bytes += text.len();
+                        }
+                    } else {
+                        self.disabled = true;
+                    }
+                }
             }
         }
         if let Some(choices) = value.get("choices").and_then(Value::as_array) {
@@ -240,7 +295,16 @@ impl Parser {
         }
         if value.get("type").and_then(Value::as_str) == Some("content_block_start") {
             if let Some(block) = value.get("content_block") {
-                self.append(&block.to_string());
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    self.append(text);
+                }
+                let size = block.to_string().len();
+                if self.block_bytes.saturating_add(size) <= MAX_CAPTURE {
+                    self.block_bytes += size;
+                    self.blocks.insert(index, (block.clone(), String::new()));
+                } else {
+                    self.disabled = true;
+                }
             }
         }
         if let Some(output) = value.get("output") {
@@ -248,8 +312,8 @@ impl Parser {
             self.record.output = Some(output.clone());
         }
     }
-    fn append(&mut self, text: &str) {
-        if self.text.is_empty() && !text.is_empty() {
+    fn first_token(&mut self) {
+        if !self.record.metadata.contains_key("ttft_ms") {
             self.record.metadata.insert(
                 "ttft_ms".into(),
                 json!(
@@ -257,6 +321,11 @@ impl Parser {
                         / 1_000_000.0
                 ),
             );
+        }
+    }
+    fn append(&mut self, text: &str) {
+        if !text.is_empty() {
+            self.first_token();
         }
         let remaining = MAX_CAPTURE.saturating_sub(self.text.len());
         let mut end = remaining.min(text.len());
@@ -332,7 +401,19 @@ impl Parser {
                 .insert("proxy.capture_limit_exceeded".into(), json!(true));
         }
         if self.record.output.is_none() {
-            self.record.output = Some(json!([{"role":"assistant","content":self.text}]));
+            let content = if self.blocks.values().any(|(block, _)| block["type"] == "tool_use") {
+                Value::Array(self.blocks.into_values().map(|(mut block, input)| {
+                    if !input.is_empty() {
+                        if let Ok(input) = serde_json::from_str::<Value>(&input) {
+                            block["input"] = input;
+                        }
+                    }
+                    block
+                }).collect())
+            } else {
+                Value::String(self.text)
+            };
+            self.record.output = Some(json!([{"role":"assistant","content":content}]));
         }
         Some(self.record)
     }
@@ -442,6 +523,59 @@ impl Frames {
 mod tests {
     use super::*;
     use crate::record::Usage;
+    #[test]
+    fn anthropic_starts_are_structural_and_tools_assemble_json() {
+        let mut p = Parser::new(("r", "fake"), "anthropic", "/messages", 1, &json!({}), json!({}));
+        p.event(&json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}));
+        assert!(!p.record.metadata.contains_key("ttft_ms"));
+        p.event(&json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"answer"}}));
+        assert!(p.record.metadata.contains_key("ttft_ms"));
+        assert_eq!(p.finish(200, true).unwrap().output.unwrap()[0]["content"], "answer");
+
+        let mut p = Parser::new(("r", "fake"), "anthropic", "/messages", 1, &json!({}), json!({}));
+        p.event(&json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":"initial "}}));
+        p.event(&json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"text"}}));
+        p.event(&json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tool_mock","name":"echo","input":{}}}));
+        p.event(&json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"arg\":"}}));
+        p.event(&json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"value\"}"}}));
+        assert_eq!(p.finish(200, true).unwrap().output.unwrap()[0]["content"], json!([
+            {"type":"text","text":"initial text"},
+            {"type":"tool_use","id":"tool_mock","name":"echo","input":{"arg":"value"}}
+        ]));
+
+        let mut p = Parser::new(("r", "fake"), "anthropic", "/messages", 1, &json!({}), json!({}));
+        p.event(&json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_mock","name":"echo","input":{}}}));
+        assert!(!p.record.metadata.contains_key("ttft_ms"));
+        p.event(&json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}));
+        assert!(p.record.metadata.contains_key("ttft_ms"));
+    }
+    #[test]
+    fn sse_multiline_events_accept_all_line_endings_and_fragmentation() {
+        for ending in ["\n", "\r", "\r\n"] {
+            for chunk_size in [1, 7, 1024] {
+                let mut p = Parser::new(("r", "fake"), "openai", "/chat/completions", 1, &json!({}), json!({}));
+                p.sse(true);
+                let event = format!("data: {{{ending}data: \"choices\":[{{\"delta\":{{\"content\":\"encoded response\"}}}}],{ending}data: \"usage\":{{\"prompt_tokens\":11,\"completion_tokens\":7,\"prompt_tokens_details\":{{\"cached_tokens\":3}}}}}}{ending}");
+                for chunk in event.as_bytes().chunks(chunk_size) {
+                    p.bytes(chunk);
+                }
+                assert!(p.text.is_empty(), "dispatch requires a blank line");
+                p.bytes(ending.as_bytes());
+                let record = p.finish(200, true).unwrap();
+                assert_eq!(record.output.unwrap()[0]["content"], "encoded response");
+                assert_eq!(record.usage, Usage {
+                    input_tokens: Some(11), output_tokens: Some(7), cache_read_input_tokens: Some(3),
+                    ..Default::default()
+                });
+            }
+        }
+        let mut p = Parser::new(("r", "fake"), "openai", "/responses", 1, &json!({}), json!({}));
+        p.sse(true);
+        p.bytes(b"data: ");
+        p.bytes(&vec![b'x'; MAX_CAPTURE]);
+        let record = p.finish(200, true).unwrap();
+        assert_eq!(record.metadata["proxy.capture_limit_exceeded"], true);
+    }
     #[test]
     fn protocol_usage_and_delta() {
         let cases = [

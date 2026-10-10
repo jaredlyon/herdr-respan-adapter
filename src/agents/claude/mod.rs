@@ -20,7 +20,7 @@ struct Session {
 #[derive(Default, Serialize, Deserialize)]
 struct Transcript {
     cursor: Cursor, current: Option<Response>, input: Vec<Value>,
-    seen: BTreeSet<String>, parent: Option<String>, turn: Option<String>,
+    seen: BTreeSet<String>, parent: Option<String>, turn: Option<String>, terminal_turn: Option<String>,
     stable_since: u64, last_offset: u64,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -51,6 +51,7 @@ fn hook(ctx: &mut HookCtx, bytes: &[u8]) -> Result<()> {
     if string(&payload, "hook_event_name").is_none() || string(&payload, "transcript_path").is_none() || string(&payload, "cwd").is_none() { return Ok(()); }
     let key = format!("native-{}-{}.json", ctx.now_ns(), crate::record::random_id()?);
     ctx.save(&key, &json!({"session":session,"received":ctx.now_ns(),"payload":payload,"metadata":ctx.metadata,"run_id":ctx.run_id,"proxy_active":ctx.proxy_active}))?;
+    ctx.mark_settle_pending()?;
     drain(ctx)
 }
 
@@ -107,7 +108,7 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
         state.sequence += 1;
         let turn = string(payload,"prompt_id").unwrap_or_else(||format!("prompt-{}-{now}",state.sequence));
         state.turn=Some(turn.clone());state.turn_start=now;state.stopped=None;state.output=None;state.error=None;
-        if let Some(path)=&state.path { let transcript=state.files.entry(path.clone()).or_default(); transcript.turn=Some(turn.clone()); transcript.input.clear(); if let Some(prompt)=payload.get("prompt") {transcript.input.push(json!({"role":"user","content":prompt}));} }
+        if let Some(path)=&state.path { let transcript=state.files.entry(path.clone()).or_default(); transcript.turn=Some(turn.clone()); transcript.terminal_turn=None; transcript.input.clear(); if let Some(prompt)=payload.get("prompt") {transcript.input.push(json!({"role":"user","content":prompt}));} }
         events.push(Event::TurnStart {metadata:BTreeMap::new(), turn_id:turn, ts_ns:now, prompt:payload.get("prompt").cloned() });
     }
     let Some(turn) = state.turn.clone() else { return Ok(()); };
@@ -179,6 +180,7 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
                     response.end=response.end.max(ts);response.model=string(message,"model").or_else(||response.model.take());
                     if let Some(usage)=message.get("usage").filter(|v|v.is_object()) {response.usage=Some(serde_json::from_value(usage.clone())?);}
                     response.finished=message["stop_reason"].as_str().is_some();
+                    if matches!(message["stop_reason"].as_str(),Some("end_turn"|"max_tokens"|"stop_sequence")) {file.terminal_turn=Some(response.turn.clone());}
                 },
                 Some("user") => {
                     settle(file,events);
@@ -188,7 +190,7 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
                         if let (Some(tool),Some(turn))=(parent,file.turn.clone()) {let child=state.children.entry(agent).or_insert(Child {turn,start:ts,..Default::default()});child.tool=Some(tool);}
                     }
                 },
-                Some("system") if row["subtype"]=="turn_duration" => settle(file,events),
+                Some("system") if row["subtype"]=="turn_duration" => {file.terminal_turn=file.turn.clone();settle(file,events);},
                 _=>{},
             }
         }
@@ -216,6 +218,10 @@ fn close_turn(state:&mut Session,now:u64,force:bool,events:&mut Vec<Event>) {
         }
     }
     let Some(stopped)=state.stopped else {return;};
+    // Stop may arrive before every assistant row, not only before the final chunk.
+    // Keep the detached sender alive through Core's three two-second retry rounds.
+    let terminal=state.path.as_ref().and_then(|path|state.files.get(path)).is_some_and(|file|file.terminal_turn==state.turn);
+    if !force && state.error.is_none() && !terminal && now.saturating_sub(stopped)<6_000_000_000 {return;}
     if !force && (now.saturating_sub(stopped)<100_000_000 || (state.error.is_none() && state.files.values().any(|f|f.current.is_some()))) {return;}
     if let Some(turn)=state.turn.take() {events.push(Event::TurnEnd {turn_id:turn,ts_ns:stopped,output:state.output.clone(),status:Some(if state.error.is_some() {"error"} else {"ok"}.into()),error:state.error.clone()});}
     state.stopped=None;

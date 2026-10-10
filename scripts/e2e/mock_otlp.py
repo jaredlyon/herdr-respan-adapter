@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Accept uncompressed OTLP JSON on loopback and preserve each request body."""
+"""Accept uncompressed OTLP JSON on loopback and preserve each request body.
+
+With --forward, also relay each request (body + Authorization) to the real upstream and return its response
+unchanged, saving the upstream status/body next to the request as `<ts>.response`. Used by the live check.
+"""
 import argparse
+import json
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -15,14 +22,24 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-        path = self.server.output / f"{time.time_ns()}.json"
-        with path.open("xb") as file:
+        stamp = time.time_ns()
+        with (self.server.output / f"{stamp}.json").open("xb") as file:
             file.write(body)
-        self.send_response(200)
+        status, reply = 200, b"{}"
+        if self.server.forward:
+            request = urllib.request.Request(self.server.forward + self.path, data=body, method="POST", headers={
+                "Content-Type": "application/json", "Authorization": self.headers.get("Authorization", "")})
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    status, reply = response.status, response.read()
+            except urllib.error.HTTPError as error:
+                status, reply = error.code, error.read()
+            (self.server.output / f"{stamp}.response").write_text(json.dumps({"status": status, "body": reply.decode(errors="replace")}))
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", "2")
+        self.send_header("Content-Length", str(len(reply)))
         self.end_headers()
-        self.wfile.write(b"{}")
+        self.wfile.write(reply)
 
 
 def main():
@@ -30,10 +47,12 @@ def main():
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--port-file", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--forward", help="real upstream base URL, e.g. https://api.respan.ai")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     server.output = args.output
+    server.forward = args.forward.rstrip("/") if args.forward else None
     args.port_file.write_text(str(server.server_port))
     server.serve_forever()
 

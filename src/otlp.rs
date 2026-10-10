@@ -84,9 +84,11 @@ pub fn payload(records: &[SpanRecord]) -> Value {
         if r.parent_key.is_none() { string(&mut attrs, "traceloop.entity.path", ""); }
         if let Some(thread) = &r.thread_id { string(&mut attrs, "respan.threads.thread_identifier", thread); }
         if let Some(customer) = r.metadata.get("customer_identifier").and_then(Value::as_str) { string(&mut attrs, "respan.customer_params.customer_identifier", customer); }
-        // Canonical contract requires a JSON string, never respan.metadata.<key> aliases.
+        // Canonical JSON bucket plus flattened `respan.metadata.<key>`: live ingest (verified 2026-10-10) only promotes the
+        // flattened form into searchable metadata, as Respan's own JS instrumentations do (respan-instrumentation-eve shared.ts).
         let mut metadata: serde_json::Map<String, Value> = r.metadata.iter().filter(|(k, _)| k.as_str() != "customer_identifier").map(|(k, v)| (k.clone(), v.clone())).collect();
         metadata.insert("agent".into(), json!(r.agent)); metadata.insert("source".into(), json!(r.source));
+        for (key, value) in &metadata { string(&mut attrs, &format!("respan.metadata.{key}"), content(value)); }
         string(&mut attrs, "respan.metadata", Value::Object(metadata).to_string());
         if r.log_type == "chat" {
             string(&mut attrs, "llm.request.type", "chat");

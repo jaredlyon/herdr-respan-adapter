@@ -1,0 +1,4 @@
+{"sessionId":"synthetic-gemini","projectHash":"synthetic-project","startTime":"2026-10-09T12:00:00.000Z","lastUpdated":"2026-10-09T12:00:00.005Z","kind":"main"}
+{"id":"response-1","timestamp":"2026-10-09T12:00:00.005Z","type":"gemini","model":"gemini-2.5-flash","content":[{"text":"Hello world"}],"tokens":null}
+{"id":"response-1","timestamp":"2026-10-09T12:00:00.005Z","type":"gemini","model":"gemini-2.5-flash","content":[{"text":"Hello world"}],"tokens":{"input":20,"output":5,"cached":7,"thoughts":3,"total":28}}
+{"id":"response-1","timestamp":"2026-10-09T12:00:00.005Z","type":"gemini","model":"gemini-2.5-flash","content":[{"text":"Hello world"}],"tokens":{"input":20,"output":5,"cached":7,"thoughts":3,"total":28}}

@@ -9,7 +9,7 @@ Requires herdr **0.9.3+**. Install on **each host running the agents**, not just
 ```sh
 herdr plugin install jaredlyon/herdr-respan-adapter
 # To pin a release:
-herdr plugin install --ref v0.1.1 jaredlyon/herdr-respan-adapter
+herdr plugin install --ref v0.1.2 jaredlyon/herdr-respan-adapter
 ```
 
 For a local checkout (linking does not build):
@@ -50,6 +50,8 @@ herdr-respan setup claude --project /path/to/repo
 herdr-respan setup --all --yes
 herdr-respan remove codex
 ```
+
+`--all` (and `all` in the setup popup) means every agent **detected on this machine**: its binary is on PATH or its config directory exists. An agent whose setup refuses (for example, Kimi without the Kimi Code CLI on PATH) is skipped with the reason, and the rest are still set up. Naming an agent explicitly always attempts it, and a refusal is an error. Each agent's edits are committed separately.
 
 Relocated agent config directories are honored by each adapter; consult its linked README for exact variables and files. Global setup is the default; supported project-local setup uses `--project`. Startup refreshes already-owned binary/extension assets after version changes; new config entries always require another explicit setup.
 

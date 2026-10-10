@@ -15,6 +15,24 @@ pub fn inference(protocol: &str, path: &str) -> bool {
     }
 }
 
+// Cache breakpoints move as Claude appends turns; they are not new conversation content.
+fn same_content(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => left.len() == right.len()
+            && left.iter().zip(right).all(|(a, b)| same_content(a, b)),
+        (Value::Object(left), Value::Object(right)) => {
+            left.keys().filter(|k| k.as_str() != "cache_control").count()
+                == right.keys().filter(|k| k.as_str() != "cache_control").count()
+                && left.iter().filter(|(k, _)| k.as_str() != "cache_control").all(|(key, value)| {
+                    right.get(key).is_some_and(|other| {
+                        if key == "content" { same_content(value, other) } else { value == other }
+                    })
+                })
+        }
+        _ => left == right,
+    }
+}
+
 pub fn delta(request: &Value, previous: Option<&Value>) -> Value {
     let mut input = request.clone();
     for key in ["messages", "input", "contents"] {
@@ -22,7 +40,7 @@ pub fn delta(request: &Value, previous: Option<&Value>) -> Value {
             request.get(key).and_then(Value::as_array),
             previous.and_then(|v| v.get(key)).and_then(Value::as_array),
         ) {
-            let prefix = now.iter().zip(old).take_while(|(a, b)| a == b).count();
+            let prefix = now.iter().zip(old).take_while(|(a, b)| same_content(a, b)).count();
             if prefix == old.len() {
                 input[key] = json!(&now[prefix..]);
             }
@@ -490,6 +508,18 @@ mod tests {
         );
         p.event(&json!({"usage":{"input_tokens":1}}));
         assert!(p.finish(200, true).is_none());
+    }
+    #[test]
+    fn captured_claude_cache_breakpoint_move_only_emits_new_messages() {
+        let old=json!({"system":"same","messages":[{"role":"user","content":[{"type":"text","text":"RUN_TOOL: execute echo hra-e2e then reply.","cache_control":{"type":"ephemeral"}}]}]});
+        let new=json!({"system":"same","messages":[{"role":"user","content":[{"type":"text","text":"RUN_TOOL: execute echo hra-e2e then reply."}]},{"role":"assistant","content":[{"type":"tool_use","id":"toolu_mock","name":"Bash","input":{"command":"echo hra-e2e"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_mock","content":"hra-e2e","cache_control":{"type":"ephemeral"}}]}]});
+        let actual=delta(&new,Some(&old));
+        assert_eq!(actual,json!({"messages":new["messages"].as_array().unwrap()[1..]}));
+        let mut changed=new.clone();changed["messages"][0]["content"][0]["text"]=json!("different prompt");
+        assert_eq!(delta(&changed,Some(&old))["messages"],changed["messages"]);
+        // A similarly named tool argument is real content, not a cache breakpoint.
+        assert!(!same_content(&json!({"content":[{"type":"tool_use","input":{"cache_control":1}}]}),
+            &json!({"content":[{"type":"tool_use","input":{"cache_control":2}}]})));
     }
     #[test]
     fn frames_survive_fragmentation_and_masking() {

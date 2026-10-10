@@ -149,14 +149,17 @@ async fn http_protocols_stream_headers_and_usage() {
                 "anthropic-beta: oauth-2025-04-20",
                 "openai-beta: responses_websockets=2026-02-06",
                 "xai-grok-cli: synthetic-session",
+                "x-hra-exact: MixedCase +/= bytes",
             ] {
-                assert!(
-                    headers
-                        .to_ascii_lowercase()
-                        .contains(&line.to_ascii_lowercase()),
-                    "missing header {line}: {headers}"
-                );
+                let (name, value) = line.split_once(": ").unwrap();
+                let actual = headers.lines().filter_map(|line| line.split_once(": "))
+                    .find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value);
+                assert_eq!(actual, Some(value), "changed header {line}: {headers}");
             }
+            let duplicates: Vec<_> = headers.lines().filter_map(|line| line.split_once(": "))
+                .filter(|(key, _)| key.eq_ignore_ascii_case("x-hra-duplicate"))
+                .map(|(_, value)| value).collect();
+            assert_eq!(duplicates, ["first", "SECOND"]);
             stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nX-Test-Header: unchanged\r\nConnection: close\r\n\r\n").unwrap();
             chunk(&mut stream, format!("data: {first}\n\n").as_bytes());
             std::thread::sleep(Duration::from_millis(250));
@@ -172,7 +175,7 @@ async fn http_protocols_stream_headers_and_usage() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
-            write!(stream,"POST /r/{run}/{protocol}/{path} HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\nAuthorization: Bearer synthetic-token\r\nX-Api-Key: synthetic-key\r\nChatGPT-Account-ID: account\r\nAnthropic-Beta: oauth-2025-04-20\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\nxai-grok-cli: synthetic-session\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+            write!(stream,"POST /r/{run}/{protocol}/{path} HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\nAuthorization: Bearer synthetic-token\r\nX-Api-Key: synthetic-key\r\nChatGPT-Account-ID: account\r\nAnthropic-Beta: oauth-2025-04-20\r\nOpenAI-Beta: responses_websockets=2026-02-06\r\nxai-grok-cli: synthetic-session\r\nX-HRA-Exact: MixedCase +/= bytes\r\nX-HRA-Duplicate: first\r\nX-HRA-Duplicate: SECOND\r\nConnection: close\r\n\r\n",body.len()).unwrap();
             stream.write_all(&body).unwrap();
             let mut bytes = Vec::new();
             let mut buffer = [0; 1024];

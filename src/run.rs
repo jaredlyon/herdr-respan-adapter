@@ -41,7 +41,7 @@ fn endpoint(config: &Config, protocol: &str) -> String {
         base.trim_end_matches('/').into()
     }
 }
-fn codex_provider(home: &std::path::Path, args: &[String]) -> Result<Option<(String, String)>> {
+fn codex_endpoint(home: &std::path::Path, args: &[String]) -> Result<Option<(String, String)>> {
     let config: toml::Value = match fs::read_to_string(home.join("config.toml")) {
         Ok(text) => toml::from_str(&text)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Value::Table(Default::default()),
@@ -70,13 +70,18 @@ fn codex_provider(home: &std::path::Path, args: &[String]) -> Result<Option<(Str
         .or_else(|| profile.and_then(|p| config.get("profiles")?.get(p)?.get("model_provider")))
         .or_else(|| config.get("model_provider"))
         .and_then(toml::Value::as_str).unwrap_or("openai");
-    if provider == "openai" { return Ok(None); }
+    if provider == "openai" {
+        return Ok(overrides.get("openai_base_url")
+            .or_else(|| profile.and_then(|p| config.get("profiles")?.get(p)?.get("openai_base_url")))
+            .or_else(|| config.get("openai_base_url"))
+            .and_then(toml::Value::as_str).map(|url| ("openai_base_url".into(),url.into())));
+    }
     let key = format!("model_providers.{provider}.base_url");
     let base = overrides.get(key.as_str())
         .or_else(|| config.get("model_providers")?.get(provider)?.get("base_url"))
         .and_then(toml::Value::as_str)
         .ok_or("custom Codex provider needs base_url for proxy routing")?;
-    Ok(Some((provider.into(), base.into())))
+    Ok(Some((key, base.into())))
 }
 fn build_launch(
     paths: &Paths,
@@ -126,9 +131,8 @@ fn build_launch(
         "codex"=>{
             // Only mode and endpoint are inspected; credentials never enter registration.
             let home=env.get("CODEX_HOME").map(std::path::PathBuf::from).unwrap_or(crate::paths::home()?.join(".codex"));
-            if let Some((provider, original))=codex_provider(&home,&launch.args)? {
+            if let Some((key, original))=codex_endpoint(&home,&launch.args)? {
                 launch.upstream.insert("openai".into(), original);
-                let key=format!("model_providers.{provider}.base_url");
                 // A later original CLI override must not bypass interception.
                 let mut index=0;
                 while index<launch.args.len() {
@@ -242,6 +246,23 @@ fn set_protocol(env: &mut BTreeMap<String, String>, protocol: &str, url: &str) {
         env.insert((*key).into(), url.into());
     }
 }
+fn secure_proxy_dirs(paths: &Paths) -> Result<()> {
+    for name in ["proxy", "proxy/runs"] {
+        let directory=paths.state.join(name);
+        let mut builder=fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)] {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&directory)?;
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory,fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    Ok(())
+}
 fn health(paths: &Paths) -> Option<Info> {
     let info: Info =
         serde_json::from_slice(&fs::read(paths.state.join("proxy.json")).ok()?).ok()?;
@@ -269,10 +290,10 @@ fn health(paths: &Paths) -> Option<Info> {
         .then_some(info)
 }
 fn ensure(paths: &Paths) -> Result<Info> {
+    secure_proxy_dirs(paths)?;
     if let Some(info) = health(paths) {
         return Ok(info);
     }
-    fs::create_dir_all(paths.state.join("proxy"))?;
     let lock = paths.state.join("proxy/start.lock");
     let start = Instant::now();
     loop {
@@ -683,6 +704,11 @@ mod tests {
         assert_eq!(launch.args.iter().filter(|a|a.contains("model_providers.second.base_url")).count(),1);
         assert!(launch.env.is_empty());
         assert_eq!(fs::read_to_string(home.join("config.toml")).unwrap(),contents);
+        let args=["codex","exec","-c","model_provider=\"openai\"","-c","openai_base_url=\"http://127.0.0.1:8125/v1\"","prompt"].map(String::from);
+        let launch=build_launch(&paths,&config,&args,base,&env).unwrap();
+        assert_eq!(launch.upstream["openai"],"http://127.0.0.1:8125/v1");
+        assert_eq!(launch.args.iter().filter(|a|a.contains("openai_base_url")).count(),1);
+        assert_eq!(launch.args[2],format!("openai_base_url=\"{base}/openai\""));
     }
     #[test]
     fn grok_routes_auxiliary_and_honors_configured_upstreams() {
@@ -719,5 +745,24 @@ mod tests {
         assert!(build_launch(&paths,&config,&["kimi".into(),"-m".into(),"config-alias".into()],base,&env).is_err());
         env.insert("HERDR_RESPAN".into(),"off".into());env.remove("KIMI_MODEL_NAME");
         assert!(!build_launch(&paths,&config,&args,base,&env).unwrap().proxy);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn capability_directories_are_owner_only_even_when_preexisting() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp=crate::tests::Temp::new();
+        let paths=Paths {state:temp.path.join("state"),config:temp.path.join("config")};
+        for existing in [false,true] {
+            if existing {
+                for name in ["proxy","proxy/runs"] {
+                    let directory=paths.state.join(name);
+                    fs::set_permissions(directory,fs::Permissions::from_mode(0o755)).unwrap();
+                }
+            }
+            secure_proxy_dirs(&paths).unwrap();
+            for name in ["proxy","proxy/runs"] {
+                assert_eq!(fs::metadata(paths.state.join(name)).unwrap().permissions().mode()&0o777,0o700);
+            }
+        }
     }
 }

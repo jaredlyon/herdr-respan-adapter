@@ -34,6 +34,7 @@ impl HookCtx {
         Ok(Self { config, agent: agent.into(), metadata, run_id, customer_identifier, state_dir, paths, redactor, writer: None, proxy_active })
     }
     pub fn state_dir(&self) -> &Path { &self.state_dir }
+    pub(crate) fn global_state_dir(&self)->&Path {&self.paths.state}
     pub fn now_ns(&self) -> u64 { now_ns() }
     /// Append an accepted record and stamp last_span_ns with the current UTC emission time.
     pub fn emit(&mut self, mut rec: SpanRecord) -> Result<()> {

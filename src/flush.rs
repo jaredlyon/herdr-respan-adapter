@@ -1,7 +1,7 @@
 use crate::{config::{Config, Credentials}, paths::Paths, record::SpanRecord, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{io::{BufRead, BufReader, Read}, path::Path, time::Duration};
+use std::{collections::BTreeSet,io::{BufRead,BufReader,Read},path::{Path,PathBuf},time::Duration};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -23,12 +23,14 @@ impl FlushStatus {
 pub fn run(paths: &Paths, config: &Config, creds: Option<&Credentials>) -> Result<()> {
     let Some(lock) = crate::spool::Lock::acquire(&paths.state)? else { return Ok(()); };
     let mut info = status(&paths.state);
+    let mut held_files=BTreeSet::new();
     let result = (|| {
         settle_agents(paths,config,crate::agents::AGENTS,&lock,std::thread::sleep)?;
         loop {
-            drain(paths, config, creds, &lock, &mut info)?;
-            if crate::spool::ready(&paths.state)?.is_empty() {
-                if !crate::agents::common::bridge::has_pending(&paths.state)? { return Ok(()); }
+            held_files=drain(paths,config,creds,&lock,&mut info)?;
+            let sendable=crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p));
+            if !sendable {
+                if !crate::agents::common::bridge::has_pending(&paths.state)? {return Ok(());}
                 std::thread::sleep(Duration::from_millis(1));
             }
         }
@@ -37,7 +39,7 @@ pub fn run(paths: &Paths, config: &Config, creds: Option<&Credentials>) -> Resul
     info.last_result = if result.is_ok() { "ok" } else { "failed (records retained)" }.into();
     crate::paths::atomic_json(&paths.state.join("status.json"), &info)?;
     drop(lock);
-    if result.is_ok() && (!crate::spool::ready(&paths.state)?.is_empty() || crate::agents::common::bridge::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
+    if result.is_ok() && (crate::spool::ready(&paths.state)?.iter().any(|p|!held_files.contains(p)) || crate::agents::common::bridge::has_pending(&paths.state)?) && !cfg!(test) { crate::spool::spawn_flush(paths)?; }
     result
 }
 fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],lock:&crate::spool::Lock,mut wait:impl FnMut(Duration))->Result<()> {
@@ -58,45 +60,50 @@ fn settle_agents(paths:&Paths,config:&Config,agents:&[crate::agents::AgentSpec],
     }Ok(())
 }
 
-fn drain(paths: &Paths, config: &Config, creds: Option<&Credentials>, lock: &crate::spool::Lock, info: &mut FlushStatus) -> Result<()> {
-    crate::agents::common::bridge::at_flush(paths, config, crate::record::now_ns())?;
-    let files = crate::spool::ready(&paths.state)?;
-    if files.is_empty() { return Ok(()); }
-    let creds = creds.ok_or("no Respan API key configured")?;
-    let mut records = Vec::new(); let mut groups = Vec::new();
+fn drain(paths:&Paths,config:&Config,creds:Option<&Credentials>,lock:&crate::spool::Lock,info:&mut FlushStatus)->Result<BTreeSet<PathBuf>> {
+    let now=crate::record::now_ns();
+    crate::agents::common::bridge::at_flush(paths,config,now)?;
+    crate::otlp::gc_turns(&paths.state,now)?;
+    let files=crate::spool::ready(&paths.state)?;let mut held_files=BTreeSet::new();
+    if files.is_empty() {return Ok(held_files);}
+    let mut records=Vec::new();let mut groups=Vec::new();
     for path in files {
-        let start = records.len();
+        let start=records.len();
         match std::fs::File::open(&path) {
-            Ok(file) => { for line in BufReader::new(file).lines() {
-                let line = line?; if line.trim().is_empty() { continue; }
-                let rec: SpanRecord = serde_json::from_str(&line)?;
-                if rec.v != 1 { return Err("unsupported spool version".into()); }
-                records.push(rec);
-            } },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e.into()),
+            Ok(file)=>{for line in BufReader::new(file).lines() {
+                let line=line?;if line.trim().is_empty() {continue;}
+                let record:SpanRecord=serde_json::from_str(&line)?;
+                if record.v!=1 {return Err("unsupported spool version".into());}records.push(record);
+            }},
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>continue,Err(e)=>return Err(e.into()),
         }
-        groups.push((path, start, records.len()));
+        groups.push((path,start,records.len()));
     }
-    crate::otlp::reparent(&mut records);
-    for (path, start, end) in groups {
-        let mut offset = start;
-        while offset < end {
-            lock.refresh()?;
-            let next = (offset + 512).min(end);
-            post(config, &creds.key, &crate::otlp::payload(&records[offset..next]))?;
+    let mut held=crate::otlp::correlate_proxy(&paths.state,&mut records,now)?;
+    for (path,start,end) in groups {
+        // Partition in place: sendable records first, held records retained at the tail.
+        // Successful batch acknowledgements therefore retain both unsent and held records.
+        let mut send_end=start;
+        for index in start..end {if !held[index] {records.swap(send_end,index);held.swap(send_end,index);send_end+=1;}}
+        let mut offset=start;
+        while offset<send_end {
+            lock.refresh()?;let next=(offset+512).min(send_end);
+            let creds=creds.ok_or("no Respan API key configured")?;
+            post(config,&creds.key,&crate::otlp::payload(&records[offset..next]))?;
             info.sent((next-offset) as u64,crate::record::now_ns()/1_000_000_000);
-            if next < end {
-                let mut rest = Vec::new();
-                for rec in &records[next..end] { serde_json::to_writer(&mut rest, rec)?; rest.push(b'\n'); }
-                let tmp = path.with_extension("ack"); crate::paths::write_private(&tmp, &rest)?; std::fs::rename(tmp, &path)?;
-            }
-            offset = next;
+            if next<end {retain_records(&path,&records[next..end])?;}
+            offset=next;
         }
-        match std::fs::remove_file(path) { Ok(()) => {}, Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}, Err(e) => return Err(e.into()) }
+        if send_end<end {held_files.insert(path);}
+        else {match std::fs::remove_file(path) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}}
     }
-    Ok(())
+    Ok(held_files)
 }
+fn retain_records(path:&Path,records:&[SpanRecord])->Result<()> {
+    let mut rest=Vec::new();for record in records {serde_json::to_writer(&mut rest,record)?;rest.push(b'\n');}
+    let temporary=path.with_extension("ack");crate::paths::write_private(&temporary,&rest)?;std::fs::rename(temporary,path)?;Ok(())
+}
+
 pub fn post(config: &Config, key: &str, payload: &Value) -> Result<()> {
     let base = config.base_url.trim_end_matches('/');
     if !base.starts_with("https://") {
@@ -249,5 +256,38 @@ fn month(seconds: u64) -> String {
         let config=Config {base_url:format!("http://{address}"),..Default::default()};
         assert!(run(&paths,&config,None).is_err());assert!(run(&paths,&config,Some(&key())).is_err());assert_eq!(crate::spool::ready(&paths.state).unwrap().len(),1);
         assert_eq!(status(&paths.state).last_result,"failed (records retained)");
+    }
+    fn register(paths:&Paths,run:&str) {crate::paths::atomic_json(&paths.state.join("proxy/runs").join(format!("{run}.json")),&serde_json::json!({})).unwrap();}
+    fn turn(ctx:&mut HookCtx,id:&str,start:u64,end:Option<u64>) {
+        let mut events=vec![serde_json::json!({"type":"turn_start","turn_id":id,"ts_ns":start})];if let Some(end)=end {events.push(serde_json::json!({"type":"turn_end","turn_id":id,"ts_ns":end}));}
+        crate::agents::common::bridge::ingest(ctx,serde_json::from_value(serde_json::json!({"v":1,"agent":"fake","session_id":"s","events":events})).unwrap()).unwrap();
+    }
+    fn proxy_records(paths:&Paths,records:&[SpanRecord]) {
+        let mut writer=crate::spool::Writer::new(&paths.state,u64::MAX).unwrap();for record in records {writer.append(record).unwrap();}writer.finish().unwrap();
+    }
+    fn proxy_record(key:&str,start:u64)->SpanRecord {SpanRecord {span_key:key.into(),run_id:Some("run".into()),source:"proxy".into(),log_type:"chat".into(),start_ns:start,end_ns:start+1,agent:"fake".into(),..Default::default()}}
+    fn spans(requests:&[(String,Value)])->Vec<&Value> {requests.iter().flat_map(|(_,payload)|payload["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array().unwrap()).collect()}
+    #[test] fn proxy_before_delayed_turn_is_held_then_parented() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let config=Config {customer_identifier:"test".into(),..Default::default()};register(&paths,"run");let now=crate::record::now_ns();proxy_records(&paths,&[proxy_record("early",now)]);
+        let file=crate::spool::ready(&paths.state).unwrap()[0].clone();let original=std::fs::read(&file).unwrap();let start=std::time::Instant::now();run(&paths,&config,None).unwrap();assert!(start.elapsed()<Duration::from_secs(1));assert_eq!(std::fs::read(&file).unwrap(),original);assert_eq!(status(&paths.state).spans_sent_month,0);
+        let mut ctx=HookCtx::new(paths.clone(),config.clone(),"fake",BTreeMap::new(),Some("run".into()),true).unwrap();turn(&mut ctx,"t",now.saturating_sub(1),None);
+        let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,..config};run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();let sent=spans(&requests);assert_eq!(sent.len(),1);assert_eq!(sent[0]["traceId"],crate::otlp::trace_id("fake:s:t"));assert_eq!(sent[0]["parentSpanId"],crate::otlp::span_id("fake:s:t:turn"));assert!(crate::spool::ready(&paths.state).unwrap().is_empty());
+    }
+    #[test] fn proxy_during_open_turn_is_parented_without_a_root_spool_record() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,customer_identifier:"test".into(),..Default::default()};register(&paths,"run");let now=crate::record::now_ns();let mut ctx=HookCtx::new(paths.clone(),config.clone(),"fake",BTreeMap::new(),Some("run".into()),true).unwrap();turn(&mut ctx,"open",now,None);assert!(crate::spool::ready(&paths.state).unwrap().is_empty());
+        proxy_records(&paths,&[proxy_record("during",now+1)]);run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();let sent=spans(&requests);assert_eq!(sent.len(),1);assert_eq!(sent[0]["parentSpanId"],crate::otlp::span_id("fake:s:open:turn"));
+    }
+    #[test] fn ended_run_without_a_turn_is_sent_standalone() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,..Default::default()};register(&paths,"run");std::fs::remove_file(paths.state.join("proxy/runs/run.json")).unwrap();proxy_records(&paths,&[proxy_record("standalone",crate::record::now_ns())]);run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();let sent=spans(&requests);assert_eq!(sent.len(),1);assert_eq!(sent[0]["traceId"],crate::otlp::trace_id("run"));assert!(sent[0].get("parentSpanId").is_none());
+    }
+    #[test] fn two_turns_and_post_stop_summary_use_the_correct_preceding_turn() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}"),(200,"{}")]);let config=Config {base_url,customer_identifier:"test".into(),..Default::default()};register(&paths,"run");let now=crate::record::now_ns();let mut ctx=HookCtx::new(paths.clone(),config.clone(),"fake",BTreeMap::new(),Some("run".into()),true).unwrap();
+        turn(&mut ctx,"first",now,Some(now+10));turn(&mut ctx,"second",now+30,None);proxy_records(&paths,&[proxy_record("in-first",now+5),proxy_record("summary",now+20),proxy_record("in-second",now+35)]);run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();let sent=spans(&requests);
+        for (key,turn) in [("in-first","first"),("summary","first"),("in-second","second")] {let span=sent.iter().find(|s|s["spanId"]==crate::otlp::span_id(key)).unwrap();assert_eq!(span["parentSpanId"],crate::otlp::span_id(&format!("fake:s:{turn}:turn")));assert_eq!(span["traceId"],crate::otlp::trace_id(&format!("fake:s:{turn}")));}
+        let windows:Vec<crate::otlp::TurnWindow>=serde_json::from_slice(&std::fs::read(paths.state.join("proxy/turns/run.json")).unwrap()).unwrap();assert_eq!(windows.len(),2);assert_eq!(windows[0].end_ns,Some(now+10));assert!(windows[1].end_ns.is_none());
+    }
+    #[test] fn mixed_spool_acknowledges_sendable_records_but_retains_held_requests() {
+        let tmp=crate::tests::Temp::new();let paths=paths(&tmp);let (base_url,server)=mock(vec![(200,"{}")]);let config=Config {base_url,..Default::default()};register(&paths,"run");let now=crate::record::now_ns();let held=proxy_record("held",now);let regular=SpanRecord {span_key:"regular".into(),..Default::default()};proxy_records(&paths,&[held,regular]);
+        run(&paths,&config,Some(&key())).unwrap();let requests=server.join().unwrap();assert_eq!(spans(&requests).len(),1);assert_eq!(status(&paths.state).spans_sent_month,1);let ready=crate::spool::ready(&paths.state).unwrap();assert_eq!(ready.len(),1);let retained:SpanRecord=serde_json::from_slice(&std::fs::read(&ready[0]).unwrap()).unwrap();assert_eq!(retained.span_key,"held");
     }
 }

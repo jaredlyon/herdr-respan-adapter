@@ -97,8 +97,8 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
             });
             turn.touched=now;
             match event {
-                Event::TurnStart {ts_ns,prompt,metadata,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;turn.root_metadata=metadata;},
-                Event::TurnEnd {ts_ns,output,status,error,..}=>{turn.end=Some(ts_ns);turn.output=output;turn.status=status;turn.error=error;},
+                Event::TurnStart {ts_ns,prompt,metadata,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;turn.root_metadata=metadata;index_turn(ctx,&trace,turn)?;},
+                Event::TurnEnd {ts_ns,output,status,error,..}=>{turn.end=Some(ts_ns);turn.output=output;turn.status=status;turn.error=error;index_turn(ctx,&trace,turn)?;},
                 Event::Chat {id,parent_id,start_ns,end_ns,model,provider,input,output,usage,cost_usd,aux_task,status,error,metadata,..}=>{
                     infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{id}"),parent_id.as_deref(),start_ns,end_ns);
                     rec.name=if let Some(model)=&model {format!("{model}.chat")} else {"chat".into()};rec.log_type="chat".into();rec.model=model;rec.provider=provider;rec.input=input;rec.output=output;rec.usage=usage.unwrap_or_default();rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;
@@ -121,7 +121,7 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
     if flush {
         for (trace,turn) in &mut open.turns {
             if turn.end.is_none()&&turn.start.is_some_and(|s|now.saturating_sub(s)>=ctx.config.turn_timeout_secs.saturating_mul(1_000_000_000)) {
-                turn.end=Some(now);turn.status=Some("error".into());turn.error=Some("turn not closed".into());
+                turn.end=Some(now);turn.status=Some("error".into());turn.error=Some("turn not closed".into());index_turn(ctx,trace,turn)?;
             }
             if turn.end.is_some() && (turn.start.is_some() || now.saturating_sub(turn.touched)>=ctx.config.turn_timeout_secs.saturating_mul(1_000_000_000)) {emit_turn(ctx,trace,turn)?;}
             emit_subs(ctx,trace,turn)?;
@@ -131,6 +131,9 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
     for (key,_) in closed.iter().take(closed.len().saturating_sub(1024)) {open.turns.remove(key);}
     ctx.finish()?;ctx.save("open.json",&open)?;ctx.save("seen",&seen.order)?;
     for file in files {std::fs::remove_file(file)?;}Ok(())
+}
+fn index_turn(ctx:&HookCtx,trace:&str,turn:&Turn)->Result<()> {
+    if let (Some(run),Some(start))=(&turn.run_id,turn.start) {crate::otlp::save_turn(ctx.global_state_dir(),run,trace,start,turn.end)?;}Ok(())
 }
 fn infer_time(turn:&mut Turn,start:u64,end:u64) {if !turn.explicit_start {turn.start=Some(turn.start.map_or(start,|s|s.min(start)));}turn.latest_end=turn.latest_end.max(end);}
 fn child(turn:&Turn,trace:&str,suffix:&str,parent:Option<&str>,start:u64,end:u64)->SpanRecord {

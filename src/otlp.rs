@@ -1,4 +1,6 @@
-use crate::record::SpanRecord;
+use crate::{record::SpanRecord,Result};
+use serde::{Deserialize,Serialize};
+use std::{collections::BTreeMap,path::{Path,PathBuf}};
 use serde_json::{json, Value};
 
 // Match Respan shared.ts exactly: JS charCodeAt iterates UTF-16, not UTF-8.
@@ -12,14 +14,56 @@ pub fn span_id(key: &str) -> String {
     format!("{:08x}{:08x}", hash(units.iter().copied(), 31), hash(units.iter().rev().copied(), 7))
 }
 fn hash(units: impl Iterator<Item = u16>, multiplier: u32) -> u32 { units.fold(0u32, |h, c| h.wrapping_mul(multiplier).wrapping_add(c as u32)) }
+// In-memory batch helper; the sender uses durable correlate_proxy so early requests can be held.
 pub fn reparent(records: &mut [SpanRecord]) {
     for i in 0..records.len() {
         if records[i].source != "proxy" || records[i].run_id.is_none() { continue; }
         let parent = records.iter().filter(|r| r.source != "proxy" && ["agent", "workflow"].contains(&r.log_type.as_str())
-            && r.run_id == records[i].run_id && r.start_ns <= records[i].start_ns && r.end_ns >= records[i].end_ns)
-            .min_by_key(|r| r.end_ns - r.start_ns).map(|r| (r.span_key.clone(), r.trace_key.clone().or_else(|| Some(r.span_key.clone()))));
+            && r.run_id == records[i].run_id && r.start_ns <= records[i].start_ns)
+            .max_by_key(|r| r.start_ns).map(|r| (r.span_key.clone(), r.trace_key.clone().or_else(|| Some(r.span_key.clone()))));
         if let Some((key, trace)) = parent { records[i].parent_key = Some(key); records[i].trace_key = trace; }
     }
+}
+// Persist correlation at turn start, rather than waiting for the root span's spool record.
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq)]
+pub(crate) struct TurnWindow {pub trace_key:String,pub span_key:String,pub start_ns:u64,pub end_ns:Option<u64>}
+fn run_file(state:&Path,directory:&str,run:&str)->Result<PathBuf> {
+    if run.is_empty()||run.len()>128||!run.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_') {return Err("invalid proxy run identifier".into());}
+    Ok(state.join("proxy").join(directory).join(format!("{run}.json")))
+}
+fn load_turns(path:&Path)->Result<Vec<TurnWindow>> {
+    match std::fs::read(path) {Ok(bytes)=>Ok(serde_json::from_slice(&bytes)?),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(Vec::new()),Err(e)=>Err(e.into())}
+}
+pub(crate) fn save_turn(state:&Path,run:&str,trace:&str,start:u64,end:Option<u64>)->Result<()> {
+    let path=run_file(state,"turns",run)?;let mut turns=load_turns(&path)?;let span_key=format!("{trace}:turn");
+    if let Some(turn)=turns.iter_mut().find(|t|t.span_key==span_key) {
+        if turn.start_ns==start&&turn.end_ns==end {return Ok(());}turn.start_ns=start;turn.end_ns=end;
+    } else {turns.push(TurnWindow {trace_key:trace.into(),span_key,start_ns:start,end_ns:end});}
+    crate::paths::atomic_json(&path,&turns)
+}
+/// True entries are recent unmatched proxy requests that must remain in the spool.
+pub(crate) fn correlate_proxy(state:&Path,records:&mut [SpanRecord],now:u64)->Result<Vec<bool>> {
+    let mut cache:BTreeMap<String,(Vec<TurnWindow>,bool)>=BTreeMap::new();let mut held=Vec::with_capacity(records.len());
+    for record in records {
+        if record.source!="proxy" {held.push(false);continue;}let Some(run)=record.run_id.as_deref() else {held.push(false);continue;};
+        if !cache.contains_key(run) {let turns=load_turns(&run_file(state,"turns",run)?)?;let registered=run_file(state,"runs",run)?.exists();cache.insert(run.into(),(turns,registered));}
+        let (turns,registered)=cache.get(run).expect("run cached");
+        if let Some(turn)=turns.iter().filter(|t|t.start_ns<=record.start_ns).max_by_key(|t|t.start_ns) {
+            record.trace_key=Some(turn.trace_key.clone());record.parent_key=Some(turn.span_key.clone());held.push(false);
+        } else if *registered&&now.saturating_sub(record.start_ns)<=120_000_000_000 {held.push(true);}
+        else {record.trace_key=Some(run.into());record.parent_key=None;held.push(false);}
+    }Ok(held)
+}
+pub(crate) fn gc_turns(state:&Path,now:u64)->Result<()> {
+    let directory=state.join("proxy/turns");let entries=match std::fs::read_dir(&directory) {Ok(entries)=>entries,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(()),Err(e)=>return Err(e.into())};
+    for entry in entries {
+        let entry=entry?;let path=entry.path();if !entry.file_type()?.is_file()||path.extension().is_none_or(|x|x!="json") {continue;}
+        let Some(run)=path.file_stem().and_then(|s|s.to_str()) else {continue;};let gone=path.with_extension("gone");
+        if run_file(state,"runs",run)?.exists() {match std::fs::remove_file(&gone) {Ok(())=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.into())}continue;}
+        // First-observed absence is conservative: an old turn may belong to a run removed just now.
+        let since=match std::fs::read(&gone) {Ok(bytes)=>serde_json::from_slice::<u64>(&bytes)?,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{crate::paths::atomic_json(&gone,&now)?;now},Err(e)=>return Err(e.into())};
+        if now.saturating_sub(since)>3_600_000_000_000 {std::fs::remove_file(&path)?;std::fs::remove_file(gone)?;}
+    }Ok(())
 }
 fn string(attrs: &mut Vec<Value>, key: &str, value: impl Into<String>) { attrs.push(json!({"key":key,"value":{"stringValue":value.into()}})); }
 fn int(attrs: &mut Vec<Value>, key: &str, value: Option<u64>) { if let Some(value) = value { attrs.push(json!({"key":key,"value":{"intValue":value.to_string()}})); } }
@@ -80,5 +124,16 @@ pub fn payload(records: &[SpanRecord]) -> Value {
             SpanRecord { span_key:"request".into(),run_id:Some("r".into()),start_ns:20,end_ns:40,source:"proxy".into(),..Default::default() }];
         reparent(&mut records); assert_eq!(records[1].parent_key.as_deref(),Some("turn")); assert_eq!(records[1].trace_key.as_deref(),Some("turn"));
         records[1].run_id=Some("other".into()); records[1].parent_key=None; reparent(&mut records); assert!(records[1].parent_key.is_none());
+    }
+    #[test] fn registered_unknown_turns_expire_and_run_ids_are_safe_leaf_names() {
+        let tmp=crate::tests::Temp::new();crate::paths::atomic_json(&tmp.path.join("proxy/runs/run.json"),&serde_json::json!({})).unwrap();
+        let mut records=vec![SpanRecord {span_key:"p".into(),run_id:Some("run".into()),source:"proxy".into(),start_ns:1,trace_key:Some("old".into()),..Default::default()}];
+        assert_eq!(correlate_proxy(&tmp.path,&mut records,120_000_000_001).unwrap(),vec![true]);assert_eq!(correlate_proxy(&tmp.path,&mut records,120_000_000_002).unwrap(),vec![false]);assert_eq!(records[0].trace_key.as_deref(),Some("run"));assert!(records[0].parent_key.is_none());
+        assert!(save_turn(&tmp.path,"../outside","trace",1,None).is_err());
+    }
+    #[test] fn abandoned_turn_files_gc_after_an_hour_of_observed_absence() {
+        let tmp=crate::tests::Temp::new();save_turn(&tmp.path,"run","trace",1,Some(2)).unwrap();let path=tmp.path.join("proxy/turns/run.json");let gone=path.with_extension("gone");
+        gc_turns(&tmp.path,1).unwrap();assert!(path.exists());assert!(gone.exists());gc_turns(&tmp.path,3_600_000_000_001).unwrap();assert!(path.exists());gc_turns(&tmp.path,3_600_000_000_002).unwrap();assert!(!path.exists());assert!(!gone.exists());
+        save_turn(&tmp.path,"run","trace",1,None).unwrap();gc_turns(&tmp.path,10).unwrap();crate::paths::atomic_json(&tmp.path.join("proxy/runs/run.json"),&serde_json::json!({})).unwrap();gc_turns(&tmp.path,10_000_000_000_000).unwrap();assert!(path.exists());assert!(!gone.exists());
     }
 }

@@ -4,6 +4,7 @@ mod setup;
 use crate::{agents::{common::{bridge::{self, Batch, Event}, jsonl::{self, Cursor}}, AgentSpec}, record::{HookCtx, Usage}, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{collections::{BTreeMap, BTreeSet}, path::{Path, PathBuf}};
 
 pub static SPEC: AgentSpec = AgentSpec { kind: "claude", display: "Claude Code", hook, plan: setup::plan, reply: None, settle: Some(settle_pending) };
@@ -101,6 +102,8 @@ fn process(state: &mut Session, payload: &Value, now: u64, events: &mut Vec<Even
     read_transcripts(state, now, events)?;
     if event == "UserPromptSubmit" && child.is_none() {
         close_turn(state, now, true, events);
+        let completed:Vec<_>=state.children.iter().filter(|(_,child)|child.completed).map(|(id,child)|(id.clone(),child.path.clone())).collect();
+        for (id,path) in completed {state.children.remove(&id);if let Some(path)=path {state.files.remove(&path);}}
         state.sequence += 1;
         let turn = string(payload,"prompt_id").unwrap_or_else(||format!("prompt-{}-{now}",state.sequence));
         state.turn=Some(turn.clone());state.turn_start=now;state.stopped=None;state.output=None;state.error=None;
@@ -169,7 +172,7 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
                     if !same {settle(file,events);}
                     let Some(turn)=file.turn.clone() else {continue;};
                     let response=file.current.get_or_insert_with(||Response {id,message_id,request_id:request,turn,start:ts,end:ts,model:string(message,"model"),input:file.input.clone(),..Default::default()});
-                    let row_id=string(&row,"uuid").unwrap_or_else(||line.clone());
+                    let row_id=string(&row,"uuid").unwrap_or_else(||format!("{:x}",Sha256::digest(line.as_bytes())));
                     if response.rows.insert(row_id) {
                         if let Some(parts)=message["content"].as_array() {response.parts.extend(parts.iter().cloned());}
                     }
@@ -196,7 +199,7 @@ fn read_transcripts(state:&mut Session, now:u64, events:&mut Vec<Event>) -> Resu
 fn settle(file:&mut Transcript,events:&mut Vec<Event>) {
     let Some(response)=file.current.take() else {return;};
     for id in [&Some(response.id.clone()),&response.message_id,&response.request_id].into_iter().flatten() {file.seen.insert(id.clone());}
-    // ponytail: recent IDs are bounded; bridge independently deduplicates replayed spans.
+    // ponytail: bounded IDs; bridge also deduplicates within its recent-key window.
     while file.seen.len()>8192 {file.seen.pop_first();}
     let output=json!([{"role":"assistant","content":response.parts}]);
     file.input.push(output[0].clone());
@@ -213,7 +216,7 @@ fn close_turn(state:&mut Session,now:u64,force:bool,events:&mut Vec<Event>) {
         }
     }
     let Some(stopped)=state.stopped else {return;};
-    if !force && (now.saturating_sub(stopped)<100_000_000 || state.files.values().any(|f|f.current.is_some())) {return;}
+    if !force && (now.saturating_sub(stopped)<100_000_000 || (state.error.is_none() && state.files.values().any(|f|f.current.is_some()))) {return;}
     if let Some(turn)=state.turn.take() {events.push(Event::TurnEnd {turn_id:turn,ts_ns:stopped,output:state.output.clone(),status:Some(if state.error.is_some() {"error"} else {"ok"}.into()),error:state.error.clone()});}
     state.stopped=None;
 }

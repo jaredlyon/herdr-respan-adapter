@@ -151,3 +151,12 @@ fn session_start_baselines_existing_history() {
     let state:Session=ctx.load("session-session-fixture.json").unwrap();assert_eq!(state.files[&path.to_string_lossy().into_owned()].cursor.offset,std::fs::metadata(&path).unwrap().len());assert!(records(&tmp).is_empty());
     send(&mut ctx,&payloads[0]);send(&mut ctx,&payloads[5]);settle_now(&mut ctx);assert_eq!(records(&tmp).len(),1); // Historical response was never traced.
 }
+
+#[test]
+fn stop_failure_closes_turn_without_inventing_final_model_usage() {
+    let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);let payloads=payloads(&tmp);let path=tmp.path.join("main.jsonl");
+    std::fs::write(&path,"").unwrap();send(&mut ctx,&payloads[0]);
+    let partial=include_str!("fixtures/streamed.jsonl").lines().take(2).collect::<Vec<_>>().join("\n")+"\n";std::fs::write(&path,partial).unwrap();
+    let mut failed=payloads[5].clone();failed["hook_event_name"]=json!("StopFailure");failed["error"]=json!("synthetic API failure");send(&mut ctx,&failed);settle_now(&mut ctx);
+    let spans=records(&tmp);assert_eq!(spans.len(),1);assert_eq!(spans[0].log_type,"agent");assert_eq!(spans[0].status,"error");
+}

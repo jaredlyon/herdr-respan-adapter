@@ -63,20 +63,26 @@ impl Lock {
         let mut file = match open() {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale=match path.metadata() {Ok(m)=>m.modified()?.elapsed().unwrap_or_default()>stale_after,Err(e) if matches!(e.kind(),std::io::ErrorKind::NotFound|std::io::ErrorKind::PermissionDenied)=>return Ok(None),Err(e)=>return Err(e.into())};
+                let stale=match path.metadata() {Ok(m)=>m.modified()?.elapsed().unwrap_or_default()>stale_after,Err(e) if e.kind()==std::io::ErrorKind::NotFound||lock_unavailable(&e)=>return Ok(None),Err(e)=>return Err(e.into())};
                 if !stale { return Ok(None); }
                 match fs::remove_file(path) {
                     Ok(()) => {},
-                    Err(e) if matches!(e.kind(),std::io::ErrorKind::NotFound|std::io::ErrorKind::PermissionDenied) => return Ok(None),
+                    Err(e) if e.kind()==std::io::ErrorKind::NotFound||lock_unavailable(&e) => return Ok(None),
                     Err(e) => return Err(e.into()),
                 }
-                match open() { Ok(f) => f, Err(e) if matches!(e.kind(),std::io::ErrorKind::AlreadyExists|std::io::ErrorKind::PermissionDenied) => return Ok(None), Err(e) => return Err(e.into()) }
-            }, Err(e) if e.kind()==std::io::ErrorKind::PermissionDenied => return Ok(None), Err(e) => return Err(e.into()),
+                match open() { Ok(f) => f, Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists||lock_unavailable(&e) => return Ok(None), Err(e) => return Err(e.into()) }
+            }, Err(e) if lock_unavailable(&e) => return Ok(None), Err(e) => return Err(e.into()),
         };
         let token = format!("{}-{}", std::process::id(), now_ns()); file.write_all(token.as_bytes())?;drop(file); // No open handle prevents Windows reclamation.
         Ok(Some(Self { path:path.into(), token }))
     }
     pub fn refresh(&self) -> Result<()> { crate::paths::write_private(&self.path, self.token.as_bytes()) }
+}
+fn lock_unavailable(error:&std::io::Error)->bool {
+    if error.kind()==std::io::ErrorKind::PermissionDenied {return true;}
+    // Rust leaves ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION uncategorized.
+    #[cfg(windows)] {matches!(error.raw_os_error(),Some(32|33))}
+    #[cfg(not(windows))] {false}
 }
 impl Drop for Lock { fn drop(&mut self) { if fs::read_to_string(&self.path).ok().as_deref() == Some(&self.token) { let _ = fs::remove_file(&self.path); } } }
 fn settle_pending(state:&Path,agents:&[crate::agents::AgentSpec])->bool {

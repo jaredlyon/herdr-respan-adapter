@@ -10,7 +10,7 @@ mkdir -p "$OPENCODE_CONFIG_DIR/plugins" "$HRA_ROOT/home" "$HRA_ROOT/xdg"/{config
 python3 - "$HRA_ROOT" "$HRA_PROVIDER_URL" "$REAL_HOME" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
-config={'provider':{'mock':{'npm':'@ai-sdk/openai-compatible','name':'Mock','options':{'baseURL':sys.argv[2]+'/v1','apiKey':'dummy'},'models':{'mock-model':{'name':'Mock'}}}},'model':'mock/mock-model','permission':{'bash':{'*':'deny','echo hra-e2e':'allow'}},'enabled_providers':['mock']}
+config={'$schema':'https://opencode.ai/config.json','provider':{'mock':{'npm':'@ai-sdk/openai-compatible','name':'Mock','options':{'baseURL':sys.argv[2]+'/v1','apiKey':'dummy'},'models':{'mock-model':{'name':'Mock'}}}},'model':'mock/mock-model','permission':{'bash':{'*':'deny','echo hra-e2e':'allow'}},'enabled_providers':['mock']}
 (root/'agent/opencode.json').write_text(json.dumps(config))
 (root/'agent/tui.json').write_text(json.dumps({'theme':'opencode'}))
 (root/'config.before.json').write_text(json.dumps(config))
@@ -102,7 +102,39 @@ assert len({attrs(s)['respan.threads.thread_identifier'] for s in spans})==3
 print(f'Asserted {len(spans)} spans: V1 run and full TUI, four prompts')
 (root/'received.before.json').write_text(json.dumps({p.name:p.read_text() for p in (root/'otlp').glob('*.json')}))
 PY
-(cd "$HRA_ROOT/work" && env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_WORKSPACE_ID -u HERDR_TAB_ID -u HERDR_SOCKET_PATH bash "$HRA_ROOT/launch.sh" run --model mock/mock-model --format json 'RUN_TOOL: execute echo hra-e2e then reply.') >"$HRA_ROOT/outside.out" 2>"$HRA_ROOT/outside.err"
+# Match the real terminal transport outside herdr; redirected stdin can keep run alive.
+python3 - "$HRA_ROOT" <<'PY'
+import errno,os,pathlib,pty,select,signal,sys,time
+root=pathlib.Path(sys.argv[1]); pid,fd=pty.fork()
+if pid==0:
+    os.chdir(root/'work')
+    for key in list(os.environ):
+        if key.startswith('HERDR_'): del os.environ[key]
+    os.execvp('bash',['bash',str(root/'launch.sh'),'run','--model','mock/mock-model','--format','json','RUN_TOOL: execute echo hra-e2e then reply.'])
+try:
+    deadline=time.monotonic()+60
+    with (root/'outside.out').open('wb') as log:
+        while time.monotonic()<deadline:
+            if select.select([fd],[],[],.1)[0]:
+                try: data=os.read(fd,65536)
+                except OSError as error:
+                    if error.errno==errno.EIO: break
+                    raise
+                if not data: break
+                log.write(data)
+            done,status=os.waitpid(pid,os.WNOHANG)
+            if done:
+                assert os.waitstatus_to_exitcode(status)==0,status
+                pid=None; break
+        else: raise AssertionError('outside OpenCode failed to exit in 60 seconds')
+    if pid:
+        _,status=os.waitpid(pid,0); pid=None
+        assert os.waitstatus_to_exitcode(status)==0,status
+finally:
+    if pid:
+        os.kill(pid,signal.SIGTERM); os.waitpid(pid,0)
+    os.close(fd)
+PY
 hra_flush
 python3 - "$HRA_ROOT" <<'PY'
 import json,pathlib,sys

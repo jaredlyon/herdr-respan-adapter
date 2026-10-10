@@ -1,0 +1,2032 @@
+[
+  {
+    "client": "run",
+    "session_id": "ses_live_1",
+    "counts": [
+      [
+        1,
+        0
+      ]
+    ],
+    "events": [
+      {
+        "type": "chat.message",
+        "input": {
+          "sessionID": "ses_live_1",
+          "model": {
+            "providerID": "mock",
+            "modelID": "mock-model"
+          }
+        },
+        "output": {
+          "message": {
+            "id": "msg_live_2",
+            "role": "user",
+            "sessionID": "ses_live_1",
+            "time": {
+              "created": 1791597115891
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "\"Say the deterministic mock text.\"",
+              "messageID": "msg_live_2",
+              "sessionID": "ses_live_1",
+              "id": "prt_live_3"
+            }
+          ]
+        }
+      },
+      {
+        "id": "evt_live_4",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "info": {
+            "id": "msg_live_2",
+            "role": "user",
+            "sessionID": "ses_live_1",
+            "time": {
+              "created": 1791597115891
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_5",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "part": {
+            "type": "text",
+            "text": "\"Say the deterministic mock text.\"",
+            "messageID": "msg_live_2",
+            "sessionID": "ses_live_1",
+            "id": "prt_live_3"
+          },
+          "time": 1791597115911
+        }
+      },
+      {
+        "id": "evt_live_6",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_7",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "info": {
+            "id": "msg_live_8",
+            "parentID": "msg_live_2",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597116282
+            },
+            "sessionID": "ses_live_1"
+          }
+        }
+      },
+      {
+        "id": "evt_live_9",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597115891
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "id": "msg_live_2",
+            "sessionID": "ses_live_1",
+            "summary": {
+              "diffs": []
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_10",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_11",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "part": {
+            "id": "prt_live_12",
+            "messageID": "msg_live_8",
+            "sessionID": "ses_live_1",
+            "type": "step-start"
+          },
+          "time": 1791597116564
+        }
+      },
+      {
+        "id": "evt_live_13",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "part": {
+            "id": "prt_live_14",
+            "messageID": "msg_live_8",
+            "sessionID": "ses_live_1",
+            "type": "text",
+            "text": "",
+            "time": {
+              "start": 1791597116565
+            }
+          },
+          "time": 1791597116565
+        }
+      },
+      {
+        "id": "evt_live_15",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "part": {
+            "id": "prt_live_14",
+            "messageID": "msg_live_8",
+            "sessionID": "ses_live_1",
+            "type": "text",
+            "text": "hra-e2e mock response",
+            "time": {
+              "start": 1791597116565,
+              "end": 1791597116567
+            }
+          },
+          "time": 1791597116567
+        }
+      },
+      {
+        "id": "evt_live_16",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "part": {
+            "id": "prt_live_17",
+            "reason": "stop",
+            "messageID": "msg_live_8",
+            "sessionID": "ses_live_1",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597116569
+        }
+      },
+      {
+        "id": "evt_live_18",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "info": {
+            "id": "msg_live_8",
+            "parentID": "msg_live_2",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597116282
+            },
+            "sessionID": "ses_live_1",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_19",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "info": {
+            "id": "msg_live_8",
+            "parentID": "msg_live_2",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597116282,
+              "completed": 1791597116572
+            },
+            "sessionID": "ses_live_1",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_20",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_21",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_1",
+          "status": {
+            "type": "idle"
+          }
+        }
+      },
+      {
+        "id": "evt_live_22",
+        "type": "session.idle",
+        "properties": {
+          "sessionID": "ses_live_1"
+        }
+      }
+    ]
+  },
+  {
+    "client": "run",
+    "session_id": "ses_live_23",
+    "counts": [
+      [
+        2,
+        1
+      ]
+    ],
+    "events": [
+      {
+        "type": "chat.message",
+        "input": {
+          "sessionID": "ses_live_23",
+          "model": {
+            "providerID": "mock",
+            "modelID": "mock-model"
+          }
+        },
+        "output": {
+          "message": {
+            "id": "msg_live_24",
+            "role": "user",
+            "sessionID": "ses_live_23",
+            "time": {
+              "created": 1791597117471
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "\"RUN_TOOL: execute echo hra-e2e then reply.\"",
+              "messageID": "msg_live_24",
+              "sessionID": "ses_live_23",
+              "id": "prt_live_25"
+            }
+          ]
+        }
+      },
+      {
+        "id": "evt_live_26",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_24",
+            "role": "user",
+            "sessionID": "ses_live_23",
+            "time": {
+              "created": 1791597117471
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_27",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "type": "text",
+            "text": "\"RUN_TOOL: execute echo hra-e2e then reply.\"",
+            "messageID": "msg_live_24",
+            "sessionID": "ses_live_23",
+            "id": "prt_live_25"
+          },
+          "time": 1791597117476
+        }
+      },
+      {
+        "id": "evt_live_28",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_29",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_30",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597117800
+            },
+            "sessionID": "ses_live_23"
+          }
+        }
+      },
+      {
+        "id": "evt_live_31",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597117471
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "id": "msg_live_24",
+            "sessionID": "ses_live_23",
+            "summary": {
+              "diffs": []
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_32",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_33",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_34",
+            "messageID": "msg_live_30",
+            "sessionID": "ses_live_23",
+            "type": "step-start"
+          },
+          "time": 1791597118099
+        }
+      },
+      {
+        "id": "evt_live_35",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_36",
+            "messageID": "msg_live_30",
+            "sessionID": "ses_live_23",
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_4",
+            "state": {
+              "status": "pending",
+              "input": {},
+              "raw": ""
+            }
+          },
+          "time": 1791597118101
+        }
+      },
+      {
+        "id": "evt_live_37",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_4",
+            "state": {
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597118105
+              }
+            },
+            "id": "prt_live_36",
+            "sessionID": "ses_live_23",
+            "messageID": "msg_live_30"
+          },
+          "time": 1791597118105
+        }
+      },
+      {
+        "id": "evt_live_38",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_4",
+            "state": {
+              "metadata": {
+                "output": ""
+              },
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597118105
+              }
+            },
+            "id": "prt_live_36",
+            "sessionID": "ses_live_23",
+            "messageID": "msg_live_30"
+          },
+          "time": 1791597118133
+        }
+      },
+      {
+        "id": "evt_live_39",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_4",
+            "state": {
+              "metadata": {
+                "output": "hra-e2e\n"
+              },
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597118105
+              }
+            },
+            "id": "prt_live_36",
+            "sessionID": "ses_live_23",
+            "messageID": "msg_live_30"
+          },
+          "time": 1791597118138
+        }
+      },
+      {
+        "id": "evt_live_40",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_4",
+            "state": {
+              "status": "completed",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "output": "hra-e2e\n",
+              "metadata": {
+                "output": "hra-e2e\n",
+                "exit": 0,
+                "truncated": false
+              },
+              "title": "echo hra-e2e",
+              "time": {
+                "start": 1791597118105,
+                "end": 1791597118141
+              }
+            },
+            "id": "prt_live_36",
+            "sessionID": "ses_live_23",
+            "messageID": "msg_live_30"
+          },
+          "time": 1791597118141
+        }
+      },
+      {
+        "id": "evt_live_41",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_42",
+            "reason": "tool-calls",
+            "messageID": "msg_live_30",
+            "sessionID": "ses_live_23",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597118143
+        }
+      },
+      {
+        "id": "evt_live_43",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_30",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597117800
+            },
+            "sessionID": "ses_live_23",
+            "finish": "tool-calls"
+          }
+        }
+      },
+      {
+        "id": "evt_live_44",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_30",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597117800,
+              "completed": 1791597118146
+            },
+            "sessionID": "ses_live_23",
+            "finish": "tool-calls"
+          }
+        }
+      },
+      {
+        "id": "evt_live_45",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_46",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_47",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597118147
+            },
+            "sessionID": "ses_live_23"
+          }
+        }
+      },
+      {
+        "id": "evt_live_48",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597117471
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "summary": {
+              "diffs": []
+            },
+            "id": "msg_live_24",
+            "sessionID": "ses_live_23"
+          }
+        }
+      },
+      {
+        "id": "evt_live_49",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_50",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_51",
+            "messageID": "msg_live_47",
+            "sessionID": "ses_live_23",
+            "type": "step-start"
+          },
+          "time": 1791597118174
+        }
+      },
+      {
+        "id": "evt_live_52",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_53",
+            "messageID": "msg_live_47",
+            "sessionID": "ses_live_23",
+            "type": "text",
+            "text": "",
+            "time": {
+              "start": 1791597118175
+            }
+          },
+          "time": 1791597118175
+        }
+      },
+      {
+        "id": "evt_live_54",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_53",
+            "messageID": "msg_live_47",
+            "sessionID": "ses_live_23",
+            "type": "text",
+            "text": "hra-e2e mock response",
+            "time": {
+              "start": 1791597118175,
+              "end": 1791597118177
+            }
+          },
+          "time": 1791597118177
+        }
+      },
+      {
+        "id": "evt_live_55",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "part": {
+            "id": "prt_live_56",
+            "reason": "stop",
+            "messageID": "msg_live_47",
+            "sessionID": "ses_live_23",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597118178
+        }
+      },
+      {
+        "id": "evt_live_57",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_47",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597118147
+            },
+            "sessionID": "ses_live_23",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_58",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "info": {
+            "id": "msg_live_47",
+            "parentID": "msg_live_24",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597118147,
+              "completed": 1791597118180
+            },
+            "sessionID": "ses_live_23",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_59",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_60",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_23",
+          "status": {
+            "type": "idle"
+          }
+        }
+      },
+      {
+        "id": "evt_live_61",
+        "type": "session.idle",
+        "properties": {
+          "sessionID": "ses_live_23"
+        }
+      }
+    ]
+  },
+  {
+    "client": "tui",
+    "session_id": "ses_live_62",
+    "counts": [
+      [
+        1,
+        0
+      ],
+      [
+        2,
+        1
+      ]
+    ],
+    "events": [
+      {
+        "type": "chat.message",
+        "input": {
+          "sessionID": "ses_live_62",
+          "agent": "build",
+          "model": {
+            "providerID": "mock",
+            "modelID": "mock-model"
+          }
+        },
+        "output": {
+          "message": {
+            "id": "msg_live_63",
+            "role": "user",
+            "sessionID": "ses_live_62",
+            "time": {
+              "created": 1791597120572
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "Say the deterministic mock text.",
+              "messageID": "msg_live_63",
+              "sessionID": "ses_live_62",
+              "id": "prt_live_64"
+            }
+          ]
+        }
+      },
+      {
+        "id": "evt_live_65",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_63",
+            "role": "user",
+            "sessionID": "ses_live_62",
+            "time": {
+              "created": 1791597120572
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_66",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "text",
+            "text": "Say the deterministic mock text.",
+            "messageID": "msg_live_63",
+            "sessionID": "ses_live_62",
+            "id": "prt_live_64"
+          },
+          "time": 1791597120575
+        }
+      },
+      {
+        "id": "evt_live_67",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_68",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_69",
+            "parentID": "msg_live_63",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597120861
+            },
+            "sessionID": "ses_live_62"
+          }
+        }
+      },
+      {
+        "id": "evt_live_70",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597120572
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "id": "msg_live_63",
+            "sessionID": "ses_live_62",
+            "summary": {
+              "diffs": []
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_71",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_72",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_73",
+            "messageID": "msg_live_69",
+            "sessionID": "ses_live_62",
+            "type": "step-start"
+          },
+          "time": 1791597121654
+        }
+      },
+      {
+        "id": "evt_live_74",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_75",
+            "messageID": "msg_live_69",
+            "sessionID": "ses_live_62",
+            "type": "text",
+            "text": "",
+            "time": {
+              "start": 1791597121656
+            }
+          },
+          "time": 1791597121656
+        }
+      },
+      {
+        "id": "evt_live_76",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_75",
+            "messageID": "msg_live_69",
+            "sessionID": "ses_live_62",
+            "type": "text",
+            "text": "hra-e2e mock response",
+            "time": {
+              "start": 1791597121656,
+              "end": 1791597121658
+            }
+          },
+          "time": 1791597121659
+        }
+      },
+      {
+        "id": "evt_live_77",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_78",
+            "reason": "stop",
+            "messageID": "msg_live_69",
+            "sessionID": "ses_live_62",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597121661
+        }
+      },
+      {
+        "id": "evt_live_79",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_69",
+            "parentID": "msg_live_63",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597120861
+            },
+            "sessionID": "ses_live_62",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_80",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_69",
+            "parentID": "msg_live_63",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597120861,
+              "completed": 1791597121663
+            },
+            "sessionID": "ses_live_62",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_81",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_82",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "idle"
+          }
+        }
+      },
+      {
+        "id": "evt_live_83",
+        "type": "session.idle",
+        "properties": {
+          "sessionID": "ses_live_62"
+        }
+      },
+      {
+        "id": "evt_live_84",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597120572
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "summary": {
+              "diffs": []
+            },
+            "id": "msg_live_63",
+            "sessionID": "ses_live_62"
+          }
+        }
+      },
+      {
+        "type": "chat.message",
+        "input": {
+          "sessionID": "ses_live_62",
+          "agent": "build",
+          "model": {
+            "providerID": "mock",
+            "modelID": "mock-model"
+          }
+        },
+        "output": {
+          "message": {
+            "id": "msg_live_85",
+            "role": "user",
+            "sessionID": "ses_live_62",
+            "time": {
+              "created": 1791597121892
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          },
+          "parts": [
+            {
+              "type": "text",
+              "text": "RUN_TOOL: execute echo hra-e2e then reply.",
+              "messageID": "msg_live_85",
+              "sessionID": "ses_live_62",
+              "id": "prt_live_86"
+            }
+          ]
+        }
+      },
+      {
+        "id": "evt_live_87",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_85",
+            "role": "user",
+            "sessionID": "ses_live_62",
+            "time": {
+              "created": 1791597121892
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_88",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "text",
+            "text": "RUN_TOOL: execute echo hra-e2e then reply.",
+            "messageID": "msg_live_85",
+            "sessionID": "ses_live_62",
+            "id": "prt_live_86"
+          },
+          "time": 1791597121894
+        }
+      },
+      {
+        "id": "evt_live_89",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_90",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_91",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121901
+            },
+            "sessionID": "ses_live_62"
+          }
+        }
+      },
+      {
+        "id": "evt_live_92",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597121892
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "id": "msg_live_85",
+            "sessionID": "ses_live_62",
+            "summary": {
+              "diffs": []
+            }
+          }
+        }
+      },
+      {
+        "id": "evt_live_93",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_94",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_95",
+            "messageID": "msg_live_91",
+            "sessionID": "ses_live_62",
+            "type": "step-start"
+          },
+          "time": 1791597121938
+        }
+      },
+      {
+        "id": "evt_live_96",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_97",
+            "messageID": "msg_live_91",
+            "sessionID": "ses_live_62",
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_8",
+            "state": {
+              "status": "pending",
+              "input": {},
+              "raw": ""
+            }
+          },
+          "time": 1791597121941
+        }
+      },
+      {
+        "id": "evt_live_98",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_8",
+            "state": {
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597121949
+              }
+            },
+            "id": "prt_live_97",
+            "sessionID": "ses_live_62",
+            "messageID": "msg_live_91"
+          },
+          "time": 1791597121949
+        }
+      },
+      {
+        "id": "evt_live_99",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_8",
+            "state": {
+              "metadata": {
+                "output": ""
+              },
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597121949
+              }
+            },
+            "id": "prt_live_97",
+            "sessionID": "ses_live_62",
+            "messageID": "msg_live_91"
+          },
+          "time": 1791597121983
+        }
+      },
+      {
+        "id": "evt_live_100",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_8",
+            "state": {
+              "metadata": {
+                "output": "hra-e2e\n"
+              },
+              "status": "running",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "time": {
+                "start": 1791597121949
+              }
+            },
+            "id": "prt_live_97",
+            "sessionID": "ses_live_62",
+            "messageID": "msg_live_91"
+          },
+          "time": 1791597121989
+        }
+      },
+      {
+        "id": "evt_live_101",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_hra_8",
+            "state": {
+              "status": "completed",
+              "input": {
+                "command": "echo hra-e2e"
+              },
+              "output": "hra-e2e\n",
+              "metadata": {
+                "output": "hra-e2e\n",
+                "exit": 0,
+                "truncated": false
+              },
+              "title": "echo hra-e2e",
+              "time": {
+                "start": 1791597121949,
+                "end": 1791597121992
+              }
+            },
+            "id": "prt_live_97",
+            "sessionID": "ses_live_62",
+            "messageID": "msg_live_91"
+          },
+          "time": 1791597121992
+        }
+      },
+      {
+        "id": "evt_live_102",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_103",
+            "reason": "tool-calls",
+            "messageID": "msg_live_91",
+            "sessionID": "ses_live_62",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597121993
+        }
+      },
+      {
+        "id": "evt_live_104",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_91",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121901
+            },
+            "sessionID": "ses_live_62",
+            "finish": "tool-calls"
+          }
+        }
+      },
+      {
+        "id": "evt_live_105",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_91",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121901,
+              "completed": 1791597121996
+            },
+            "sessionID": "ses_live_62",
+            "finish": "tool-calls"
+          }
+        }
+      },
+      {
+        "id": "evt_live_106",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_107",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_108",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "input": 0,
+              "output": 0,
+              "reasoning": 0,
+              "cache": {
+                "read": 0,
+                "write": 0
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121997
+            },
+            "sessionID": "ses_live_62"
+          }
+        }
+      },
+      {
+        "id": "evt_live_109",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597121892
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "summary": {
+              "diffs": []
+            },
+            "id": "msg_live_85",
+            "sessionID": "ses_live_62"
+          }
+        }
+      },
+      {
+        "id": "evt_live_110",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_111",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_112",
+            "messageID": "msg_live_108",
+            "sessionID": "ses_live_62",
+            "type": "step-start"
+          },
+          "time": 1791597122026
+        }
+      },
+      {
+        "id": "evt_live_113",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_114",
+            "messageID": "msg_live_108",
+            "sessionID": "ses_live_62",
+            "type": "text",
+            "text": "",
+            "time": {
+              "start": 1791597122027
+            }
+          },
+          "time": 1791597122027
+        }
+      },
+      {
+        "id": "evt_live_115",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_114",
+            "messageID": "msg_live_108",
+            "sessionID": "ses_live_62",
+            "type": "text",
+            "text": "hra-e2e mock response",
+            "time": {
+              "start": 1791597122027,
+              "end": 1791597122028
+            }
+          },
+          "time": 1791597122028
+        }
+      },
+      {
+        "id": "evt_live_116",
+        "type": "message.part.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "part": {
+            "id": "prt_live_117",
+            "reason": "stop",
+            "messageID": "msg_live_108",
+            "sessionID": "ses_live_62",
+            "type": "step-finish",
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "cost": 0
+          },
+          "time": 1791597122029
+        }
+      },
+      {
+        "id": "evt_live_118",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_108",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121997
+            },
+            "sessionID": "ses_live_62",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_119",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "id": "msg_live_108",
+            "parentID": "msg_live_85",
+            "role": "assistant",
+            "mode": "build",
+            "agent": "build",
+            "path": {
+              "cwd": "/mock/work",
+              "root": "/"
+            },
+            "cost": 0,
+            "tokens": {
+              "total": 18,
+              "input": 8,
+              "output": 7,
+              "reasoning": 0,
+              "cache": {
+                "write": 0,
+                "read": 3
+              }
+            },
+            "modelID": "mock-model",
+            "providerID": "mock",
+            "time": {
+              "created": 1791597121997,
+              "completed": 1791597122031
+            },
+            "sessionID": "ses_live_62",
+            "finish": "stop"
+          }
+        }
+      },
+      {
+        "id": "evt_live_120",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "busy"
+          }
+        }
+      },
+      {
+        "id": "evt_live_121",
+        "type": "session.status",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "status": {
+            "type": "idle"
+          }
+        }
+      },
+      {
+        "id": "evt_live_122",
+        "type": "session.idle",
+        "properties": {
+          "sessionID": "ses_live_62"
+        }
+      },
+      {
+        "id": "evt_live_123",
+        "type": "message.updated",
+        "properties": {
+          "sessionID": "ses_live_62",
+          "info": {
+            "role": "user",
+            "time": {
+              "created": 1791597121892
+            },
+            "agent": "build",
+            "model": {
+              "providerID": "mock",
+              "modelID": "mock-model"
+            },
+            "summary": {
+              "diffs": []
+            },
+            "id": "msg_live_85",
+            "sessionID": "ses_live_62"
+          }
+        }
+      }
+    ]
+  }
+]

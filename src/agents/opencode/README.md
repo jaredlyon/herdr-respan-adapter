@@ -51,7 +51,7 @@ V1 compatibility requires **1.18.29+**, which accepts the object-style plugin en
 
 ## Provenance and checks
 
-All fixtures are **synthetic**, with no personal data, credentials or real provider calls:
+The original fixtures are **synthetic**; the live fixture below is captured against loopback mocks. Neither contains personal data, credentials or real provider calls:
 
 - `fixtures/v1.json`: `anomalyco/opencode@055d95bb7e278c94baf06235a52cac79dd13ba67`, [`packages/schema/src/v1/session.ts:210-495,571-642`](https://github.com/anomalyco/opencode/blob/055d95bb7e278c94baf06235a52cac79dd13ba67/packages/schema/src/v1/session.ts); final completion semantics from [`packages/opencode/src/session/processor.ts:435-470,608-610`](https://github.com/anomalyco/opencode/blob/055d95bb7e278c94baf06235a52cac79dd13ba67/packages/opencode/src/session/processor.ts).
 - `fixtures/v2.json`: the same commit's [`packages/schema/src/session-event.ts:25-390`](https://github.com/anomalyco/opencode/blob/055d95bb7e278c94baf06235a52cac79dd13ba67/packages/schema/src/session-event.ts), [`model.ts:15-21`](https://github.com/anomalyco/opencode/blob/055d95bb7e278c94baf06235a52cac79dd13ba67/packages/schema/src/model.ts), and [`session-delivery.ts:7-8`](https://github.com/anomalyco/opencode/blob/055d95bb7e278c94baf06235a52cac79dd13ba67/packages/schema/src/session-delivery.ts). Execution completion envelope follows herdr's V2 `api.data.listen` consumer below.
@@ -68,4 +68,17 @@ Runnable checks (no installed agents or external endpoints required):
 # Run node --check on each assets/*.js / assets/*.mjs file as well.
 ```
 
-Actual agent loading, Windows executable spawning, attached-server runtime behavior, V2 installed-release event compatibility and live Respan ingestion require subsequent orchestrator verification; synthetic tests do not claim these are exercised.
+## Real V1 mock-provider E2E
+
+`bash scripts/e2e/run_opencode.sh` uses the installed OpenCode **1.18.35** on Spark, two loopback-only shared mocks and a dedicated `hra-e2e-opencode` herdr session. Build with `~/.cargo/bin/cargo build --release`; the driver defaults to this worktree's `target/release/herdr-respan` (`HRA_BIN` may override it). HOME, every XDG directory and `OPENCODE_CONFIG_DIR` are isolated; the launcher constructs a credential-free environment, disables share/model fetching/updating, and exposes only the mock provider. A preseeded native `$schema` preference avoids mistaking OpenCode's own first-run config update for a removal defect. Only `echo hra-e2e` is permitted: deny-all rules precede the exact allow rule because OpenCode uses last-match permission precedence.
+
+The driver exercises the **V1 local server entrypoint** using two `opencode run` calls, then the **pane-local full TUI entrypoint** using two prompts in one interactive client. The expected received tree is four turn traces: twice `turn → chat`, twice `turn → chat, bash, chat` (12 spans, three native sessions). Each assistant message exposes **input=8, output=7, cache.read=3, cache.write=0, reasoning=0**. The mock's OpenAI prompt total is 11: OpenCode separates its three cached tokens from the eight uncached input tokens. Settlement is per-message, not a cumulative session total or a second step-finish span. The tool input/output must prove `echo hra-e2e → hra-e2e`. Herdr pane/workspace/machine IDs, native thread IDs, OK statuses, correct parentage, unique delivery, no outside-herdr OTLP and semantic setup/remove restoration are asserted. The outside run uses a fresh non-herdr PTY: the tested redirected-stdin process completed responses but did not exit, while terminal transport exits normally. Cleanup stops only the test's own herdr session and mocks.
+
+`fixtures/live-v1.json` was **captured live 2026-10-10 UTC** (2026-10-09 operator date) with OpenCode 1.18.35 against the loopback provider, from `~/.hra-e2e/opencode/run-bNsUDrxC/native.jsonl`. It retains relevant native user/message/part/status/idle events for the two run clients and one full TUI client; unrelated plugin/session-list events and the outside run are excluded. Native identifiers are consistently pseudonymized and local paths become `/mock/work`. No adapter events are invented. `assets/live_tests.mjs` replays both routes, asserts exact message usage/tool result/cardinality and duplicate-idle/replay suppression:
+
+```sh
+node src/agents/opencode/assets/live_tests.mjs
+bash scripts/e2e/run_opencode.sh
+```
+
+The E2E found and fixed **setup ignoring `OPENCODE_CONFIG_DIR`**, which previously installed plugins in a different directory from the real isolated agent. The relocation/project-precedence regression is in `setup.rs`. No event translation fix was needed. Windows spawning, attached/shared-server ownership, V2 installed-release compatibility, provider authentication/proxy/WebSocket behavior and real Respan ingestion remain unverified by these mocks.

@@ -21,7 +21,7 @@ pub enum Event {
 }
 impl Event {
     fn turn_id(&self) -> &str {match self {Self::TurnStart {turn_id,..}|Self::Chat {turn_id,..}|Self::Tool {turn_id,..}|Self::SubagentStart {turn_id,..}|Self::SubagentEnd {turn_id,..}|Self::TurnEnd {turn_id,..}=>turn_id}}
-    fn key(&self,trace:&str)->String {match self {Self::TurnStart {..}=>format!("{trace}:start"),Self::TurnEnd {..}=>format!("{trace}:end"),Self::Chat {id,..}=>format!("{trace}:chat:{}",component(id)),Self::Tool {id,..}=>format!("{trace}:tool:{}",component(id)),Self::SubagentStart {id,..}=>format!("{trace}:sub:{}:start",component(id)),Self::SubagentEnd {id,..}=>format!("{trace}:sub:{}:end",component(id))}}
+    fn key(&self,trace:&str)->String {match self {Self::TurnStart {..}=>format!("{trace}:start"),Self::TurnEnd {..}=>format!("{trace}:end"),Self::Chat {id,..}=>format!("{trace}:chat:{id}"),Self::Tool {id,..}=>format!("{trace}:tool:{id}"),Self::SubagentStart {id,..}=>format!("{trace}:sub:{id}:start"),Self::SubagentEnd {id,..}=>format!("{trace}:sub:{id}:end")}}
     fn scrub(&mut self,ctx:&HookCtx)->Result<()> {match self {
         Self::TurnStart {prompt,..}=>ctx.scrub_content(prompt),
         Self::Chat {input,output,..}|Self::Tool {input,output,..}=>{ctx.scrub_content(input)?;ctx.scrub_content(output)},
@@ -80,7 +80,8 @@ fn component(value:&str)->std::borrow::Cow<'_,str> {
     for ch in value.chars() {match ch {'%'=>encoded.push_str("%25"),':'=>encoded.push_str("%3A"),_=>encoded.push(ch)}}
     std::borrow::Cow::Owned(encoded)
 }
-fn trace_key(agent:&str,session:&str,turn:&str)->String {format!("{}:{}:{}",component(agent),component(session),component(turn))}
+// Only session/turn delimiters are ambiguous; child ids after a fixed kind stay verbatim.
+fn trace_key(agent:&str,session:&str,turn:&str)->String {format!("{agent}:{}:{}",component(session),component(turn))}
 pub fn hook(ctx:&mut HookCtx,stdin:&[u8])->Result<()> {ingest(ctx,serde_json::from_slice(stdin)?)}
 pub fn ingest(ctx:&mut HookCtx,mut batch:Batch)->Result<()> {
     if batch.v!=1||batch.agent!=ctx.agent||batch.session_id.is_empty() {return Err("invalid bridge batch identity/version".into());}
@@ -116,15 +117,15 @@ fn drain(ctx:&mut HookCtx,flush:bool,now:u64)->Result<()> {
                 Event::TurnStart {ts_ns,prompt,metadata,..}=>{turn.start=Some(ts_ns);turn.explicit_start=true;turn.prompt=prompt;turn.root_metadata=metadata;index_turn(ctx,&trace,turn)?;},
                 Event::TurnEnd {ts_ns,output,status,error,..}=>{turn.end=Some(ts_ns);turn.output=output;turn.status=status;turn.error=error;index_turn(ctx,&trace,turn)?;},
                 Event::Chat {id,parent_id,start_ns,end_ns,model,provider,input,output,usage,cost_usd,aux_task,status,error,metadata,..}=>{
-                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{}",component(&id)),parent_id.as_deref(),start_ns,end_ns);
+                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("chat:{id}"),parent_id.as_deref(),start_ns,end_ns);
                     rec.name=if let Some(model)=&model {format!("{model}.chat")} else {"chat".into()};rec.log_type="chat".into();rec.model=model;rec.provider=provider;rec.input=input;rec.output=output;rec.usage=usage.unwrap_or_default();rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;
                     if let Some(cost)=cost_usd {rec.metadata.insert("estimated_cost_usd".into(),json!(cost));}
                     if let Some(aux)=aux_task {rec.metadata.insert("hermes.aux_task".into(),json!(aux));}rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
                 Event::Tool {id,parent_id,name,start_ns,end_ns,input,output,status,error,mut metadata,..}=>{
-                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{}",component(&id)),parent_id.as_deref(),start_ns,end_ns);
+                    infer_time(turn,start_ns,end_ns);let mut rec=child(turn,&trace,&format!("tool:{id}"),parent_id.as_deref(),start_ns,end_ns);
                     // `parent_tool_id` metadata nests a tool under the tool that ran it (e.g. Codex code-mode `exec` scripts).
-                    if let Some(Value::String(tool)) = metadata.remove("parent_tool_id") { rec.parent_key=Some(format!("{trace}:tool:{}",component(&tool))); }
+                    if let Some(Value::String(tool)) = metadata.remove("parent_tool_id") { rec.parent_key=Some(format!("{trace}:tool:{tool}")); }
                     rec.name=name.unwrap_or_else(||"tool".into());rec.log_type="tool".into();rec.input=input;rec.output=output;rec.status=status.unwrap_or_else(||"ok".into());rec.status_message=error;rec.metadata.insert("tool_call_id".into(),json!(id));rec.metadata.extend(metadata);ctx.emit(rec)?;
                 },
                 Event::SubagentStart {id,parent_id,ts_ns,name,metadata,..}=>{infer_time(turn,ts_ns,ts_ns);let sub=turn.subs.entry(id).or_default();sub.start=Some(ts_ns);sub.parent_id=parent_id;sub.name=name;sub.metadata=metadata;},
@@ -157,7 +158,7 @@ fn index_turn(ctx:&HookCtx,trace:&str,turn:&Turn)->Result<()> {
 fn infer_time(turn:&mut Turn,start:u64,end:u64) {if !turn.explicit_start {turn.start=Some(turn.start.map_or(start,|s|s.min(start)));}turn.latest_end=turn.latest_end.max(end);}
 fn child(turn:&Turn,trace:&str,suffix:&str,parent:Option<&str>,start:u64,end:u64)->SpanRecord {
     { let mut metadata=turn.metadata.clone(); if parent.is_some() {metadata.insert("subagent".into(),json!(true));}
-    SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:{suffix}"),parent_key:Some(parent.map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:sub:{}",component(id)))),run_id:turn.run_id.clone(),start_ns:start,end_ns:end,thread_id:Some(turn.session_id.clone()),metadata,..Default::default()} }
+    SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:{suffix}"),parent_key:Some(parent.map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:sub:{id}"))),run_id:turn.run_id.clone(),start_ns:start,end_ns:end,thread_id:Some(turn.session_id.clone()),metadata,..Default::default()} }
 }
 fn emit_turn(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     if turn.emitted {return Ok(());}let Some(end)=turn.end else {return Ok(());};let start=turn.start.unwrap_or(end);let end=end.max(turn.latest_end).max(start);
@@ -168,7 +169,7 @@ fn emit_subs(ctx:&mut HookCtx,trace:&str,turn:&mut Turn)->Result<()> {
     for (id,sub) in &mut turn.subs {
         if sub.emitted {continue;}let (Some(start),Some(end))=(sub.start,sub.end) else {continue;};
         let mut metadata=turn.metadata.clone();metadata.insert("subagent".into(),json!(true));metadata.extend(sub.metadata.clone());
-        ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:sub:{}",component(id)),parent_key:Some(sub.parent_id.as_ref().map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:tool:{}",component(id)))),run_id:turn.run_id.clone(),name:sub.name.clone().unwrap_or_else(||"subagent".into()),start_ns:start,end_ns:end.max(start),output:sub.output.clone(),status:sub.status.clone().unwrap_or_else(||"ok".into()),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;sub.emitted=true;
+        ctx.emit(SpanRecord {trace_key:Some(trace.into()),span_key:format!("{trace}:sub:{id}"),parent_key:Some(sub.parent_id.as_ref().map_or_else(||format!("{trace}:turn"),|id|format!("{trace}:tool:{id}"))),run_id:turn.run_id.clone(),name:sub.name.clone().unwrap_or_else(||"subagent".into()),start_ns:start,end_ns:end.max(start),output:sub.output.clone(),status:sub.status.clone().unwrap_or_else(||"ok".into()),thread_id:Some(turn.session_id.clone()),metadata,..Default::default()})?;sub.emitted=true;
     }Ok(())
 }
 pub(crate) fn has_pending(state:&Path)->Result<bool> {
@@ -193,6 +194,33 @@ pub(crate) fn at_flush(paths:&Paths,config:&Config,now:u64)->Result<()> {
         assert_ne!(trace_key("fake","a:b","c"),trace_key("fake","a","b:c"));
         assert_ne!(trace_key("fake","a%3Ab","c"),trace_key("fake","a:b","c"));
         assert_eq!(component(":%"),"%3A%25");
+    }
+    #[test] fn child_keys_preserve_native_ids_and_parent_links() {
+        let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);
+        let events=batch(json!([
+            {"type":"turn_start","turn_id":"t","ts_ns":1},
+            {"type":"tool","turn_id":"t","id":"spawn:%3A","start_ns":2,"end_ns":8},
+            {"type":"subagent_start","turn_id":"t","id":"child:%3A","parent_id":"spawn:%3A","ts_ns":3},
+            {"type":"chat","turn_id":"t","id":"child:%3A:request","parent_id":"child:%3A","start_ns":4,"end_ns":5},
+            {"type":"tool","turn_id":"t","id":"2026-10-09T12:00:01.000Z-1","parent_id":"child:%3A","start_ns":4,"end_ns":6,"metadata":{"parent_tool_id":"spawn:%3A"}},
+            {"type":"subagent_end","turn_id":"t","id":"child:%3A","ts_ns":7},
+            {"type":"turn_end","turn_id":"t","ts_ns":9}
+        ]));
+        let event_keys:Vec<_>=events.events.iter().map(|event|event.key("fake:s:t")).collect();
+        assert!(event_keys.contains(&"fake:s:t:chat:child:%3A:request".into()));
+        assert!(event_keys.contains(&"fake:s:t:sub:child:%3A:start".into()));
+        assert!(event_keys.contains(&"fake:s:t:sub:child:%3A:end".into()));
+        ingest(&mut ctx,events.clone()).unwrap();let all=records(&ctx);assert_eq!(all.len(),5);
+        for (key,parent) in [
+            ("tool:spawn:%3A","turn"),
+            ("sub:child:%3A","tool:spawn:%3A"),
+            ("chat:child:%3A:request","sub:child:%3A"),
+            ("tool:2026-10-09T12:00:01.000Z-1","tool:spawn:%3A"),
+        ] {
+            let rec=all.iter().find(|rec|rec.span_key==format!("fake:s:t:{key}")).unwrap();
+            assert_eq!(rec.parent_key,Some(format!("fake:s:t:{parent}")));
+        }
+        ingest(&mut ctx,events).unwrap();assert_eq!(records(&ctx).len(),5);
     }
     #[test] fn long_identifiers_survive_state_and_spool_without_collisions() {
         let tmp=crate::tests::Temp::new();let mut ctx=context(&tmp);

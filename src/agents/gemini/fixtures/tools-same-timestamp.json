@@ -1,0 +1,6 @@
+[
+ {"session_id":"synthetic-gemini","transcript_path":"/synthetic/.gemini/tmp/project/chats/session-test.jsonl","cwd":"/synthetic/repo","hook_event_name":"BeforeTool","timestamp":"2026-10-09T12:00:01.000Z","tool_name":"read_file","tool_input":{"path":"a"}},
+ {"session_id":"synthetic-gemini","transcript_path":"/synthetic/.gemini/tmp/project/chats/session-test.jsonl","cwd":"/synthetic/repo","hook_event_name":"BeforeTool","timestamp":"2026-10-09T12:00:01.000Z","tool_name":"list_directory","tool_input":{"path":"b"}},
+ {"session_id":"synthetic-gemini","transcript_path":"/synthetic/.gemini/tmp/project/chats/session-test.jsonl","cwd":"/synthetic/repo","hook_event_name":"AfterTool","timestamp":"2026-10-09T12:00:01.001Z","tool_name":"list_directory","tool_input":{"path":"b"},"tool_response":{"llmContent":"directory","returnDisplay":"directory"}},
+ {"session_id":"synthetic-gemini","transcript_path":"/synthetic/.gemini/tmp/project/chats/session-test.jsonl","cwd":"/synthetic/repo","hook_event_name":"AfterTool","timestamp":"2026-10-09T12:00:01.001Z","tool_name":"read_file","tool_input":{"path":"a"},"tool_response":{"llmContent":"file","returnDisplay":"file"}}
+]

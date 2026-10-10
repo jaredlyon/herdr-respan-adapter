@@ -1,0 +1,5 @@
+{"v":1,"agent":"gemini","session_id":"synthetic-gemini","session_path":null,"cwd":"/synthetic/repo","agent_version":null,"events":[
+{"type":"turn_start","turn_id":"turn-2026-10-09T12:00:00.000Z","ts_ns":1,"prompt":"Say hello"},
+{"type":"chat","turn_id":"turn-2026-10-09T12:00:00.000Z","id":"request-2026-10-09T12:00:00.001Z","parent_id":null,"start_ns":2,"end_ns":6,"model":"gemini-2.5-flash","provider":"google","input":[{"role":"user","content":"Say hello"}],"output":[{"role":"assistant","content":"Hello world"}],"usage":{"input_tokens":20,"output_tokens":5,"cache_read_input_tokens":7,"cache_creation_input_tokens":null,"reasoning_tokens":3},"cost_usd":null,"aux_task":null,"status":"ok","error":null},
+{"type":"turn_end","turn_id":"turn-2026-10-09T12:00:00.000Z","ts_ns":6,"output":"Hello world","status":"ok","error":null}
+]}

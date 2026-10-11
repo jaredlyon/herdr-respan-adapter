@@ -9,7 +9,7 @@ Requires herdr **0.9.3+**. Install on **each host running the agents**, not just
 ```sh
 herdr plugin install jaredlyon/herdr-respan-adapter
 # To pin a release:
-herdr plugin install --ref v0.1.3 jaredlyon/herdr-respan-adapter
+herdr plugin install --ref v0.1.4 jaredlyon/herdr-respan-adapter
 ```
 
 For a local checkout (linking does not build):
@@ -88,6 +88,8 @@ This table describes native adapter mechanisms and span sources. Every agent exc
 | Every other/custom herdr agent | Pane detection/status/exit events | Lifecycle-only agent spans: working → idle/done/blocked/exited, duration and herdr metadata. No prompts, tools or inferred token counts. |
 
 Turn traces use native session IDs as Respan thread identifiers, with chat/tool/subagent children. Subagents parent under their spawning tool where native data permits. Git context includes repository **name**, branch and HEAD SHA, never the remote URL. Lifecycle tracing is skipped when a tier-1 adapter is installed. Herdr event hooks are best-effort notifications, not a durable replay queue.
+
+Chat spans report input tokens as the total prompt including cache reads/writes, with the cache buckets in the semantic-convention fields Respan uses for cache-aware cost. Tool calls a response makes appear on its chat span (`gen_ai.completion.N.tool_calls`). The repository name is the span's Respan **Custom ID**, so *Users & identifiers → Custom IDs* gives a per-repo rollup of requests, tokens, cost, errors and latency. Time to first token is reported where measured: proxied requests (`run`) and Kimi.
 
 ## Proxy / launch wrapper
 

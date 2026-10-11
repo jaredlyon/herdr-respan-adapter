@@ -234,7 +234,7 @@ fn settle(file:&mut Transcript,events:&mut Vec<Event>) {
     while file.seen.len()>8192 {file.seen.pop_first();}
     let output=json!([{"role":"assistant","content":response.parts}]);
     file.input.push(output[0].clone());
-    events.push(Event::Chat {metadata:BTreeMap::new(),turn_id:response.turn,id:if let Some(parent)=&file.parent {format!("{parent}:{}",response.id)} else {response.id},parent_id:file.parent.clone(),start_ns:response.start,end_ns:response.end,model:response.model,provider:Some("anthropic".into()),input:Some(json!(response.input)),output:Some(output),usage:if response.finished {response.usage} else {None},cost_usd:None,aux_task:None,status:Some(if response.finished {"ok"} else {"error"}.into()),error:(!response.finished).then(||"incomplete model response".into())});
+    events.push(Event::Chat {metadata:BTreeMap::new(),turn_id:response.turn,id:if let Some(parent)=&file.parent {format!("{parent}:{}",response.id)} else {response.id},parent_id:file.parent.clone(),start_ns:response.start,end_ns:response.end,model:response.model,provider:Some("anthropic".into()),input:Some(json!(response.input)),output:Some(output),usage:if response.finished {response.usage.map(crate::record::Usage::with_cache_in_input)} else {None},cost_usd:None,aux_task:None,status:Some(if response.finished {"ok"} else {"error"}.into()),error:(!response.finished).then(||"incomplete model response".into())});
 }
 fn close_turn(state:&mut Session,now:u64,force:bool,events:&mut Vec<Event>) {
     for file in state.files.values_mut() {

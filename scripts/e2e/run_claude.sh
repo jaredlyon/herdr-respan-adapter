@@ -59,10 +59,10 @@ for trace, tree in traces.items():
         a = attrs(child)
         assert child['parentSpanId'] == parent['spanId'], child
         if child in chats:
-            for key, value in [('input_tokens',11), ('output_tokens',7), ('cache_read_input_tokens',3), ('prompt_tokens',11), ('completion_tokens',7)]:
+            for key, value in [('input_tokens',14), ('output_tokens',7), ('cache_read_input_tokens',3), ('prompt_tokens',14), ('completion_tokens',7)]:
                 prefix = 'llm.usage.' if key == 'cache_read_input_tokens' else 'gen_ai.usage.'
                 assert int(a[prefix + key]) == value, a
-            print(f"  chat {child['name']}: input=11 output=7 cache_read=3")
+            print(f"  chat {child['name']}: input=14 (total prompt) output=7 cache_read=3")
         else:
             assert 'echo hra-e2e' in a['traceloop.entity.input'], a
             assert 'hra-e2e' in a['traceloop.entity.output'], a

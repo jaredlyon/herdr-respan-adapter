@@ -1,6 +1,6 @@
 id = "jaredlyon.respan-adapter"
 name = "Respan"
-version = "0.1.3"
+version = "0.1.4"
 min_herdr_version = "0.9.3"
 description = "Trace herdr agents to Respan"
 platforms = ["linux", "macos", "windows"]

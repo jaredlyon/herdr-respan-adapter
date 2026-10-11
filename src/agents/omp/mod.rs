@@ -32,7 +32,7 @@ mod tests {
             assert_eq!(record.agent, "omp");
         }
         let chat = records.iter().find(|s| s.span_key.ends_with(":chat:response-one")).unwrap();
-        assert_eq!(chat.usage.input_tokens, Some(11));
+        assert_eq!(chat.usage.input_tokens, Some(13));
         assert_eq!(chat.usage.cache_read_input_tokens, Some(0));
         assert_eq!(chat.usage.reasoning_tokens, Some(1));
         assert_eq!(chat.model.as_deref(), Some("tiny"));

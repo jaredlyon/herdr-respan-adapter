@@ -109,11 +109,12 @@ export function collect(api: Api, deliver = send, clock = now, id: () => string 
       const failed = m.stopReason === "error" || m.stopReason === "aborted";
       if (!parent) { t.output = [{ role: "assistant", content: m.content }]; t.status = failed ? "error" : "ok"; t.error = m.errorMessage ?? null; }
       if (t.skipChat) return;
-      const u = m.usage;
+      const u = m.usage; const input = number(u?.input);
       add(t, { type: "chat", id: m.responseId ?? id(), parent_id: parent, start_ns: call?.start ?? end, end_ns: end,
         model: m.upstreamModel ?? m.model ?? null, provider: m.upstreamProvider ?? m.provider ?? null,
         input: call?.input ?? null, output: [{ role: "assistant", content: m.content }],
-        usage: { input_tokens: number(u?.input), output_tokens: number(u?.output),
+        // Native input excludes cache; Core's usage contract is the total prompt.
+        usage: { input_tokens: input === null ? null : input + (number(u?.cacheRead) ?? 0) + (number(u?.cacheWrite) ?? 0), output_tokens: number(u?.output),
           cache_read_input_tokens: number(u?.cacheRead), cache_creation_input_tokens: number(u?.cacheWrite),
           reasoning_tokens: number(u?.reasoningTokens) }, cost_usd: number(u?.cost?.total),
         status: failed ? "error" : "ok", error: m.errorMessage ?? null });

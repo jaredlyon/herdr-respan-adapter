@@ -110,9 +110,9 @@ for trace, tree in traces.items():
     for s in chats+tools:
         a=attrs(s); assert s['parentSpanId']==turn['spanId'], s
         if s in chats:
-            for key,value in [('gen_ai.usage.input_tokens',8),('gen_ai.usage.output_tokens',7),('gen_ai.usage.prompt_tokens',8),('gen_ai.usage.completion_tokens',7),('llm.usage.cache_read_input_tokens',3),('llm.usage.cache_creation_input_tokens',0)]:
+            for key,value in [('gen_ai.usage.input_tokens',11),('gen_ai.usage.output_tokens',7),('gen_ai.usage.prompt_tokens',11),('gen_ai.usage.completion_tokens',7),('llm.usage.cache_read_input_tokens',3),('llm.usage.cache_creation_input_tokens',0)]:
                 assert int(a[key])==value, a
-            print('  chat mock-model: input=8 output=7 cache_read=3 (OpenAI prompt=11 includes cached=3)')
+            print('  chat mock-model: input=11 (total prompt) output=7 cache_read=3')
         else:
             assert 'echo hra-e2e' in a['traceloop.entity.input'], a
             assert 'hra-e2e' in a['traceloop.entity.output'], a

@@ -88,10 +88,10 @@ for trace,tree in traces.items():
     for s in chats+tools:
         a=attrs(s); assert s['parentSpanId']==turns[0]['spanId'],s
         if s in chats:
-            # OpenCode reports noncached input separately from cache.read: 11 - 3.
-            for key,value in [('gen_ai.usage.input_tokens',8),('gen_ai.usage.output_tokens',7),('llm.usage.cache_read_input_tokens',3)]:
+            # Adapter input is the total prompt, including OpenCode's separate cache.read.
+            for key,value in [('gen_ai.usage.input_tokens',11),('gen_ai.usage.output_tokens',7),('llm.usage.cache_read_input_tokens',3)]:
                 assert int(a[key])==value,a
-            print('  chat: input=8 output=7 cache_read=3 (provider prompt total=11)')
+            print('  chat: input=11 (total prompt) output=7 cache_read=3')
         else:
             assert 'echo hra-e2e' in a['traceloop.entity.input'],a
             assert 'hra-e2e' in a['traceloop.entity.output'],a

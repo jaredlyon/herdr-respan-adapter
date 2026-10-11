@@ -101,9 +101,9 @@ The received tree is one turn + one chat for text, and one turn + two chats +
 one bash tool for the harmless echo. Assertions bind chats to all three native
 completed-assistant messages, check parentage, exact usage, thread ids and
 herdr pane/workspace/machine metadata, and reject duplicate/orphan spans. pi
-reports **input=8, output=7, cacheRead=3, cacheWrite=0, reasoning=0**: its OpenAI
-adapter subtracts the 3 cached tokens from mock prompt_tokens=11. These are the
-native exposed counters, not invented total-input=11. Model-rate cost is zero
+adapter reports **input=11, output=7, cacheRead=3, cacheWrite=0, reasoning=0**.
+Input is the total prompt including cached tokens: pi's native OpenAI input=8
+plus cacheRead=3 matches mock prompt_tokens=11. Model-rate cost is zero
 for the mock model. The same tool run outside herdr makes two local inference
 requests but no OTLP delivery. Removal retains provider/settings JSON values
 and the foreign capture extension, deleting only the owned observer.

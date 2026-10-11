@@ -147,7 +147,7 @@ test("captured pi 1.1.0 print-mode tool turn retains completed usage at settleme
     for (const chat of chats) {
       expect(chat.model).toBe("mock-model");
       expect(chat.provider).toBe("mock");
-      expect(chat.usage).toEqual({ input_tokens: 8, output_tokens: 7, cache_read_input_tokens: 3,
+      expect(chat.usage).toEqual({ input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 3,
         cache_creation_input_tokens: 0, reasoning_tokens: 0 });
       expect(chat.cost_usd).toBe(0);
       expect(chat.status).toBe("ok");

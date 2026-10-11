@@ -42,7 +42,7 @@ fn captured_real_claude_text_and_echo_replay() {
             assert_eq!(span.status, "ok");
             if span.log_type != "agent" { assert_eq!(span.parent_key.as_ref(), Some(&turn.span_key)); }
             if span.log_type == "chat" {
-                assert_eq!(span.usage.input_tokens, Some(11));
+                assert_eq!(span.usage.input_tokens, Some(14));
                 assert_eq!(span.usage.output_tokens, Some(7));
                 assert_eq!(span.usage.cache_read_input_tokens, Some(3));
                 assert_eq!(span.model.as_deref(), Some("claude-haiku-4-5-20251001"));

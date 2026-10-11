@@ -233,7 +233,8 @@ fn wire(s: &mut Session, r: &Value, ts: u64, cap: usize, events: &mut Vec<Event>
                     events.push(Event::Chat { turn_id: turn.clone(), id: text(e,"messageId").unwrap_or(id).into(), parent_id: None,
                         start_ns: step.start.min(ts), end_ns: ts, model: s.model.clone(), provider: s.provider.clone(), input: None,
                         output: (!step.output.is_empty()).then(|| json!([{"role":"assistant","content":step.output}])), usage,
-                        metadata: BTreeMap::new(), cost_usd: None, aux_task: None, status: Some("ok".into()), error: None });
+                        metadata: e.get("llmFirstTokenLatencyMs").filter(|v| v.is_number()).map(|v| BTreeMap::from([("ttft_ms".to_string(), v.clone())])).unwrap_or_default(),
+                        cost_usd: None, aux_task: None, status: Some("ok".into()), error: None });
                 } }
                 _ => {},
             }

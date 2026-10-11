@@ -35,7 +35,7 @@ fn golden_batch_shape_and_spool_tree() {
         assert_eq!(child.parent_key.as_deref(), Some(turn.span_key.as_str()));
     }
     let chat = spans.iter().find(|span| span.span_key.ends_with("response-2")).unwrap();
-    assert_eq!(chat.usage.input_tokens, Some(8));
+    assert_eq!(chat.usage.input_tokens, Some(10));
     assert_eq!(chat.usage.cache_creation_input_tokens, Some(0));
     assert_eq!(chat.usage.reasoning_tokens, Some(1));
     assert_eq!(chat.model.as_deref(), Some("haiku-resolved"));

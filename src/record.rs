@@ -3,10 +3,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
+/// `input_tokens` is the total prompt, including cache-read/creation tokens (OTel GenAI semconv; Respan prices
+/// cache from it). Producers whose native counter excludes cache must normalize with `with_cache_in_input`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Usage {
     pub input_tokens: Option<u64>, pub output_tokens: Option<u64>,
     pub cache_read_input_tokens: Option<u64>, pub cache_creation_input_tokens: Option<u64>, pub reasoning_tokens: Option<u64>,
+}
+impl Usage {
+    /// For Anthropic-style counters, whose `input_tokens` is only the uncached remainder.
+    pub fn with_cache_in_input(mut self) -> Self {
+        self.input_tokens = self.input_tokens.and_then(|i| [self.cache_read_input_tokens, self.cache_creation_input_tokens].into_iter().flatten().try_fold(i, u64::checked_add));
+        self
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct SpanRecord {

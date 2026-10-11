@@ -129,13 +129,15 @@ export default function extension(pi: Pi, deliver: (batch: Batch) => void = send
     finalOutput = message.content;
     finalError = error ? message.errorMessage || message.stopReason : undefined;
     const reportedCost = usage?.cost?.total;
+    const inputTokens = counter(usage?.input);
     // Core also applies proxy/gateway suppression; avoid collecting duplicate model content here.
     if (process.env.HERDR_RESPAN_PROXY !== "1" && !String(ctx.model?.baseUrl ?? "").includes("api.respan.ai")) {
       add({ type: "chat", id: message.responseId || `message-${++chatIndex}`, parent_id: null,
         start_ns: assistantStart ?? end, end_ns: end,
         model: message.responseModel ?? message.model, provider: message.provider,
         input, output: [{ role: "assistant", content: message.content }],
-        usage: usage ? { input_tokens: counter(usage.input), output_tokens: counter(usage.output),
+        // Native input excludes cache; Core's usage contract is the total prompt.
+        usage: usage ? { input_tokens: inputTokens === undefined ? undefined : inputTokens + (counter(usage.cacheRead) ?? 0) + (counter(usage.cacheWrite) ?? 0), output_tokens: counter(usage.output),
           cache_read_input_tokens: counter(usage.cacheRead), cache_creation_input_tokens: counter(usage.cacheWrite),
           reasoning_tokens: counter(usage.reasoning) } : undefined,
         cost_usd: typeof reportedCost === "number" && Number.isFinite(reportedCost) && reportedCost >= 0 ? reportedCost : undefined,

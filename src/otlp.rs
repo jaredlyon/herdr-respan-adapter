@@ -67,14 +67,33 @@ pub(crate) fn gc_turns(state:&Path,now:u64)->Result<()> {
 }
 fn string(attrs: &mut Vec<Value>, key: &str, value: impl Into<String>) { attrs.push(json!({"key":key,"value":{"stringValue":value.into()}})); }
 fn int(attrs: &mut Vec<Value>, key: &str, value: Option<u64>) { if let Some(value) = value { attrs.push(json!({"key":key,"value":{"intValue":value.to_string()}})); } }
+fn double(attrs: &mut Vec<Value>, key: &str, value: f64) { attrs.push(json!({"key":key,"value":{"doubleValue":value}})); }
 fn content(value: &Value) -> String { if let Value::String(s) = value { s.clone() } else { value.to_string() } }
 fn messages(attrs: &mut Vec<Value>, prefix: &str, value: &Value, default_role: &str) {
     let values = value.as_array().map(Vec::as_slice).unwrap_or_else(|| std::slice::from_ref(value));
     for (n, message) in values.iter().enumerate() {
         string(attrs, &format!("{prefix}.{n}.role"), message.get("role").and_then(Value::as_str).unwrap_or(default_role));
         string(attrs, &format!("{prefix}.{n}.content"), content(message.get("content").unwrap_or(message)));
-        if let Some(calls) = message.get("tool_calls") { string(attrs, &format!("{prefix}.{n}.tool_calls"), calls.to_string()); }
+        if let Some(calls) = tool_calls(message) { string(attrs, &format!("{prefix}.{n}.tool_calls"), calls.to_string()); }
     }
+}
+/// OpenAI-shaped `tool_calls` (the contract's shape) from native assistant blocks: Anthropic `tool_use`,
+/// OpenAI Responses `function_call` and Gemini `functionCall` parts.
+fn tool_calls(message: &Value) -> Option<Value> {
+    if let Some(calls) = message.get("tool_calls") { return Some(calls.clone()); }
+    let blocks = ["content", "parts"].iter().filter_map(|k| message.get(k)?.as_array()).flatten().chain(std::iter::once(message));
+    let calls: Vec<Value> = blocks.filter_map(|b| {
+        let (id, name, args) = match b.get("type").and_then(Value::as_str) {
+            Some("tool_use") => (b.get("id"), b.get("name")?, b.get("input")),
+            Some("function_call") => (b.get("call_id").or_else(|| b.get("id")), b.get("name")?, b.get("arguments")),
+            _ => { let call = b.get("functionCall")?; (call.get("id"), call.get("name")?, call.get("args")) }
+        };
+        let arguments = match args { Some(Value::String(s)) => s.clone(), Some(v) => v.to_string(), None => "{}".into() };
+        let mut call = json!({"type":"function","function":{"name":name,"arguments":arguments}});
+        if let Some(id) = id.filter(|v| v.is_string()) { call["id"] = id.clone(); }
+        Some(call)
+    }).collect();
+    (!calls.is_empty()).then(|| Value::Array(calls))
 }
 pub fn payload(records: &[SpanRecord]) -> Value {
     let spans: Vec<Value> = records.iter().map(|r| {
@@ -84,6 +103,8 @@ pub fn payload(records: &[SpanRecord]) -> Value {
         if r.parent_key.is_none() { string(&mut attrs, "traceloop.entity.path", ""); }
         if let Some(thread) = &r.thread_id { string(&mut attrs, "respan.threads.thread_identifier", thread); }
         if let Some(customer) = r.metadata.get("customer_identifier").and_then(Value::as_str) { string(&mut attrs, "respan.customer_params.customer_identifier", customer); }
+        // Custom IDs view: one row per repository (requests, tokens, cost, errors, TTFT).
+        if let Some(repo) = r.metadata.get("git.repo").and_then(Value::as_str).filter(|s| !s.is_empty()) { string(&mut attrs, "respan.span_params.custom_identifier", repo); }
         // Canonical JSON bucket plus flattened `respan.metadata.<key>`: live ingest (verified 2026-10-10) only promotes the
         // flattened form into searchable metadata, as Respan's own JS instrumentations do (respan-instrumentation-eve shared.ts).
         let mut metadata: serde_json::Map<String, Value> = r.metadata.iter().filter(|(k, _)| k.as_str() != "customer_identifier").map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -99,7 +120,12 @@ pub fn payload(records: &[SpanRecord]) -> Value {
             int(&mut attrs, "llm.usage.total_tokens", r.usage.input_tokens.zip(r.usage.output_tokens).map(|(a,b)| a.saturating_add(b)));
             int(&mut attrs, "llm.usage.cache_read_input_tokens", r.usage.cache_read_input_tokens);
             int(&mut attrs, "llm.usage.cache_creation_input_tokens", r.usage.cache_creation_input_tokens);
+            // Ingest prices cache only from these semconv keys; `llm.usage.*` alone left cache unpriced (verified live 2026-10-11).
+            int(&mut attrs, "gen_ai.usage.cache_read_input_tokens", r.usage.cache_read_input_tokens);
+            int(&mut attrs, "gen_ai.usage.cache_creation_input_tokens", r.usage.cache_creation_input_tokens);
             int(&mut attrs, "llm.usage.reasoning_tokens", r.usage.reasoning_tokens);
+            // Ingest maps this key to `time_to_first_token` in seconds; `gen_ai.server.time_to_first_token` is not mapped (verified live 2026-10-11).
+            if let Some(ms) = r.metadata.get("ttft_ms").and_then(Value::as_f64) { double(&mut attrs, "llm.openai.chat_completions.streaming_time_to_first_token", ms / 1000.0); }
             if let Some(input) = &r.input { messages(&mut attrs, "gen_ai.prompt", input, "user"); }
             if let Some(output) = &r.output { messages(&mut attrs, "gen_ai.completion", output, "assistant"); }
         } else {
@@ -119,6 +145,23 @@ pub fn payload(records: &[SpanRecord]) -> Value {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn native_tool_calls_ttft_and_repo_reach_canonical_attributes() {
+        let record = SpanRecord { span_key:"c".into(), log_type:"chat".into(), metadata:BTreeMap::from([("git.repo".into(),json!("hra")),("ttft_ms".into(),json!(350))]),
+            output:Some(json!([{"role":"assistant","content":[{"type":"text","text":"x"},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]},
+                {"role":"model","parts":[{"functionCall":{"name":"read","args":{"p":1}}}]},
+                {"type":"function_call","call_id":"c3","name":"shell","arguments":"{\"cmd\":\"pwd\"}"},
+                {"role":"assistant","content":"plain"}])), ..Default::default() };
+        let spans = payload(&[record]);
+        let attrs: BTreeMap<String,Value> = spans["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"].as_array().unwrap().iter()
+            .map(|a| (a["key"].as_str().unwrap().to_string(), a["value"].as_object().unwrap().values().next().unwrap().clone())).collect();
+        let calls = |n: usize| serde_json::from_str::<Value>(attrs[&format!("gen_ai.completion.{n}.tool_calls")].as_str().unwrap()).unwrap();
+        assert_eq!(calls(0), json!([{"id":"t1","type":"function","function":{"name":"Bash","arguments":"{\"command\":\"ls\"}"}}]));
+        assert_eq!(calls(1), json!([{"type":"function","function":{"name":"read","arguments":"{\"p\":1}"}}]));
+        assert_eq!(calls(2), json!([{"id":"c3","type":"function","function":{"name":"shell","arguments":"{\"cmd\":\"pwd\"}"}}]));
+        assert!(!attrs.contains_key("gen_ai.completion.3.tool_calls"));
+        assert_eq!(attrs["llm.openai.chat_completions.streaming_time_to_first_token"], json!(0.35));
+        assert_eq!(attrs["respan.span_params.custom_identifier"], json!("hra"));
+    }
     #[test] fn ids_and_proxy_parenting() {
         assert_eq!(trace_id("abc"), "0001786200188e62daa66d130019f600");
         assert_eq!(span_id("abc"), "0001786200001602");

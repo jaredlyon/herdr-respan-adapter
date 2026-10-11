@@ -24,7 +24,7 @@ for (const fixture of fixtures) {
       assert.equal(chat.status, "ok");
       assert.equal(chat.model, "mock-model");
       assert.equal(chat.provider, "mock");
-      assert.deepEqual(chat.usage, { input_tokens: 8, output_tokens: 7, cache_read_input_tokens: 3,
+      assert.deepEqual(chat.usage, { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 3,
         cache_creation_input_tokens: 0, reasoning_tokens: 0 });
     }
     for (const tool of tools) {

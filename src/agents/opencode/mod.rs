@@ -50,7 +50,7 @@ mod tests {
         assert_eq!(chat.span_key, "opencode:s1:p1:chat:s1:a1");
         assert_eq!(chat.model.as_deref(), Some("claude-haiku-4-5"));
         assert_eq!(chat.provider.as_deref(), Some("anthropic"));
-        assert_eq!(chat.usage.input_tokens, Some(12));
+        assert_eq!(chat.usage.input_tokens, Some(19));
         assert_eq!(chat.usage.output_tokens, Some(5));
         assert_eq!(chat.usage.cache_read_input_tokens, Some(3));
         assert_eq!(chat.usage.cache_creation_input_tokens, Some(4));

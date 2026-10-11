@@ -381,6 +381,9 @@ impl Parser {
         if self.warmup {
             return None;
         }
+        if self.record.provider.as_deref() == Some("anthropic") {
+            self.record.usage = std::mem::take(&mut self.record.usage).with_cache_in_input();
+        }
         self.record.end_ns = crate::record::now_ns().max(self.record.start_ns);
         self.record
             .metadata
@@ -618,7 +621,8 @@ mod tests {
             assert_eq!(
                 record.usage,
                 Usage {
-                    input_tokens: Some(10),
+                    // Anthropic reports uncached input; Usage stores the total prompt.
+                    input_tokens: Some(if protocol == "anthropic" { 13 } else { 10 }),
                     output_tokens: Some(4),
                     cache_read_input_tokens: Some(3),
                     ..Default::default()

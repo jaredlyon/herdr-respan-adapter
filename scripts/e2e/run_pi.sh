@@ -64,9 +64,9 @@ for tree in traces.values():
         a = attrs(child)
         assert child['parentSpanId'] == parent['spanId'], child
         if child in chats:
-            for key, value in [('gen_ai.usage.input_tokens',8), ('gen_ai.usage.output_tokens',7), ('llm.usage.cache_read_input_tokens',3), ('llm.usage.cache_creation_input_tokens',0), ('llm.usage.reasoning_tokens',0), ('gen_ai.usage.prompt_tokens',8), ('gen_ai.usage.completion_tokens',7)]:
+            for key, value in [('gen_ai.usage.input_tokens',11), ('gen_ai.usage.output_tokens',7), ('llm.usage.cache_read_input_tokens',3), ('llm.usage.cache_creation_input_tokens',0), ('llm.usage.reasoning_tokens',0), ('gen_ai.usage.prompt_tokens',11), ('gen_ai.usage.completion_tokens',7)]:
                 assert int(a[key]) == value, a
-            print('  chat: input=8 output=7 cache_read=3 cache_write=0')
+            print('  chat: input=11 (total prompt) output=7 cache_read=3 cache_write=0')
         else:
             assert child['name'] == 'bash', child
             assert 'echo hra-e2e' in a['traceloop.entity.input'], a

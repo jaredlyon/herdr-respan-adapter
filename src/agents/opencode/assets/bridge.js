@@ -24,7 +24,9 @@ const ns = (ms) => Math.trunc((typeof ms === "number" ? ms : Date.now()) * 1e6);
 const errorText = (error) => error == null ? null : typeof error === "string" ? error :
   error.data?.message ?? error.message ?? error.name ?? JSON.stringify(error);
 const number = (value) => Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
-const usage = (tokens) => ({ input_tokens: number(tokens?.input), output_tokens: number(tokens?.output),
+// Native input excludes cache; Core's usage contract is the total prompt.
+const usage = (tokens) => ({ input_tokens: number(tokens?.input) === null ? null : number(tokens.input) + (number(tokens?.cache?.read) ?? 0) + (number(tokens?.cache?.write) ?? 0),
+  output_tokens: number(tokens?.output),
   cache_read_input_tokens: number(tokens?.cache?.read), cache_creation_input_tokens: number(tokens?.cache?.write),
   reasoning_tokens: number(tokens?.reasoning) });
 const text = (parts) => [...parts.values()].filter((p) => p.type === "text" || p.type === "reasoning")

@@ -33,8 +33,8 @@ fn captured_interactive_omp_text_and_echo_replay() {
             assert_eq!(span.status, "ok");
             if span.log_type != "agent" { assert_eq!(span.parent_key.as_ref(), Some(&turn.span_key)); }
             if span.log_type == "chat" {
-                // OMP excludes cached tokens from input; OpenAI reports prompt=11, cached=3.
-                assert_eq!(span.usage.input_tokens, Some(8));
+                // Adapter input includes cached tokens: OpenAI prompt=11, cached=3.
+                assert_eq!(span.usage.input_tokens, Some(11));
                 assert_eq!(span.usage.output_tokens, Some(7));
                 assert_eq!(span.usage.cache_read_input_tokens, Some(3));
                 assert_eq!(span.usage.cache_creation_input_tokens, Some(0));

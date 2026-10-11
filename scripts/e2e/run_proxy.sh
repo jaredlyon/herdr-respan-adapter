@@ -78,11 +78,12 @@ for trace,tree in traces.items():
         a=attrs(child); assert child['parentSpanId']==turn['spanId'],child
         if child in chats:
             assert meta(child)['source']=='proxy',meta(child)
-            for key,n in [('gen_ai.usage.input_tokens',11),('gen_ai.usage.output_tokens',7),('gen_ai.usage.prompt_tokens',11),('gen_ai.usage.completion_tokens',7),('llm.usage.cache_read_input_tokens',3),('llm.usage.total_tokens',18)]:assert int(a[key])==n,a
+            input_tokens=14 if meta(child)['agent']=='claude' else 11
+            for key,n in [('gen_ai.usage.input_tokens',input_tokens),('gen_ai.usage.output_tokens',7),('gen_ai.usage.prompt_tokens',input_tokens),('gen_ai.usage.completion_tokens',7),('llm.usage.cache_read_input_tokens',3),('llm.usage.total_tokens',input_tokens+7)]:assert int(a[key])==n,a
             zero='llm.usage.cache_creation_input_tokens' if meta(child)['agent']=='claude' else 'llm.usage.reasoning_tokens'
             assert int(a[zero])==0,a
             assert meta(child)['http.status_code'] in (200,101),meta(child)
-            print('  proxy chat: input=11 output=7 cache_read=3')
+            print(f'  proxy chat: input={input_tokens} (total prompt) output=7 cache_read=3')
         else:
             assert 'echo hra-e2e' in a['traceloop.entity.input'] and 'hra-e2e' in a['traceloop.entity.output'],a
             print('  tool: echo hra-e2e -> hra-e2e')

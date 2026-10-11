@@ -205,7 +205,7 @@ async fn http_protocols_stream_headers_and_usage() {
         upstream.join().unwrap();
         let spans = records(&state, 1).await;
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].usage.input_tokens, Some(7));
+        assert_eq!(spans[0].usage.input_tokens, Some(if protocol == "anthropic" { 9 } else { 7 }));
         assert_eq!(spans[0].usage.output_tokens, Some(3));
         assert_eq!(spans[0].usage.cache_read_input_tokens, Some(2));
         assert_eq!(spans[0].source, "proxy");
